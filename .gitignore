@@ -1,6 +1,9 @@
 data/
-
 .env
+
+# runtime artefacts — never commit
+*.db
+spend.json
 
 # Python
 __pycache__/
