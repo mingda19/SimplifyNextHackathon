@@ -1,10 +1,23 @@
 data/
 .env
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
+
 # runtime artefacts — never commit
 *.db
 spend.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build and tooling output
+build/
+dist/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+
