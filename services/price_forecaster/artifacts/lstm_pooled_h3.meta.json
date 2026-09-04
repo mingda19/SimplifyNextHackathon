@@ -1,0 +1,22 @@
+{
+  "algo": "lstm",
+  "shape": "pooled",
+  "horizon": 3,
+  "window": 12,
+  "n_in": 1,
+  "n_out": 1,
+  "x_mu": 0.0012205021921545267,
+  "x_sd": 0.01718687079846859,
+  "y_mu": [
+    0.003128529293462634
+  ],
+  "y_sd": [
+    0.03752529248595238
+  ],
+  "n_train_rows": 2730,
+  "best_epoch": 3,
+  "best_val_mse_scaled": 0.5878992080688477,
+  "hidden": 32,
+  "layers": 2,
+  "dropout": 0.2
+}
