@@ -2,7 +2,7 @@ VENV := .venv
 # the orchestrator package lives under services/
 PY   := PYTHONPATH=services $(VENV)/bin/python
 
-.PHONY: aws-login aws-whoami aws-export check-bedrock install run run-a demo test ledger reset-ledger creds clean
+.PHONY: check-bedrock-live aws-login aws-whoami aws-export check-bedrock install run run-a demo test ledger reset-ledger creds clean
 
 install:
 	python3 -m venv $(VENV) && $(VENV)/bin/python -m pip install -q -U pip -r requirements.txt
@@ -40,8 +40,11 @@ aws-whoami:     ## who am I, and is the session still valid
 	@AWS_CONFIG_FILE=./aws/config aws sts get-caller-identity \
 		--profile $${AWS_PROFILE:-hackathon} --output table
 
-check-bedrock:  ## which region actually serves Claude (free, no tokens spent)
+check-bedrock:  ## identity + Mantle endpoint reachability (free)
 	@$(PY) scripts/check_bedrock.py
+
+check-bedrock-live: ## ONE 1-token real call to confirm the model id (~$$0.00002)
+	@$(PY) scripts/check_bedrock.py --live
 
 aws-export:     ## write short-lived static keys to aws/credentials (rarely needed)
 	@./scripts/aws-export-credentials.sh
