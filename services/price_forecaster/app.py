@@ -29,8 +29,11 @@ def health():
     """Liveness. The orchestrator degrades gracefully if this is unreachable."""
     try:
         n = len(F.available_series())
-        return {"status": "ok", "series": n, "model": "xgboost_pooled_h3",
-                "gate": F.CONFIDENCE_GATE}
+        gated = sum(r["gate"]["passed"] for r in F.forecast_all())
+        return {"status": "ok", "series": n,
+                "model": F.PROD_MODEL, "benchmark_only": ["lstm_pooled_h3"],
+                "gate": F.CONFIDENCE_GATE,
+                "series_emitting_signal": gated}
     except Exception as exc:                       # noqa: BLE001
         return JSONResponse(status_code=503,
                             content={"status": "degraded", "detail": str(exc)})

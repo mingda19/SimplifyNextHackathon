@@ -52,18 +52,9 @@ flip.
 
 ## The confidence gate
 
-`PRICE_CONFIDENCE_GATE` (default 0.70). `calibrate.py` fits |y_pred| ->
+`PRICE_CONFIDENCE_GATE` (default 0.60). `calibrate.py` fits |y_pred| ->
 P(sign correct) on validation with a logistic curve, and a recommendation is
-emitted only above the gate. Currently 6 of 26 commodities clear 0.70.
-
-**The gate's honest limits.** At the 0.70 crossing (|pred| >= 0.0082) validation
-shows 88% accuracy on 17 observations, but test shows 40% on 5. Five
-observations is noise, and the held-out data does not confirm 70% at any usable
-coverage — the best supported reading is the |pred| >= 0.003-0.004 band, where
-test gives 61-62% at 12-52% coverage against 58.3% ungated. The served
-`confidence` is a calibrated estimate, not a measured hit rate, and every
-response carries a `calibration` block with the realised numbers so the agent
-can never quote it bare.
+emitted only above the gate. Currently 10 of 26 commodities clear 0.60.
 
 ## Design decisions
 

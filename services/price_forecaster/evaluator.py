@@ -124,11 +124,12 @@ def run(split: str, algos, per_commodity: bool) -> int:
     best_mae = df["mae"].min()
     for _, r in df.iterrows():
         star = " *" if r["mae"] == best_mae else "  "
+        tag = "  \033[1m<- PROD\033[0m" if r["model"] == "xgboost" else ""
         skill = f"{r['skill']:+.3f}" if np.isfinite(r["skill"]) else "     -"
         dacc = f"{r['dir_acc']:.1%}" if np.isfinite(r["dir_acc"]) else "    -"
         colour = "\033[32m" if r["skill"] > 0 else "\033[31m"
         print(f"  {r['model']:<18}{r['n']:>6}{r['mae']:>10.5f}{r['rmse']:>10.5f}"
-              f"{dacc:>9}{colour}{skill:>9}\033[0m{star}")
+              f"{dacc:>9}{colour}{skill:>9}\033[0m{star}{tag}")
 
     print("\n  * lowest MAE."
           "  Skill > 0 beats 'assume no change'; <= 0 means it does not.")

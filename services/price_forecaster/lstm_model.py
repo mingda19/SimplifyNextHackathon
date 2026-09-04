@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 """
-LSTM forecaster — artefact 2 of 2.
+LSTM forecaster — artefact 2 of 2. BENCHMARK ONLY, NOT SERVED.
+
+Production serves XGBoost pooled h=3 (see forecast.py::PROD_MODEL). This module
+exists so the evaluator can show what a sequence model achieves on this data.
+Nothing in app.py or forecast.py imports it, and forecast.py asserts the loaded
+artefact is the XGBoost one.
 
 Sequence model over a rolling window of monthly returns.
 
