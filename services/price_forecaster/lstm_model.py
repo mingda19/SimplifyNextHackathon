@@ -4,16 +4,21 @@ LSTM forecaster — artefact 2 of 2.
 
 Sequence model over a rolling window of monthly returns.
 
-  pooled       (N, window, 1) -> scalar. One sequence per (commodity, month),
-               so ~2,700 training sequences: enough to train on.
-  multivariate (N, window, 26) -> 26 outputs. ~115 training sequences for a
-               recurrent model, which is very thin. Included for the comparison.
+Pooled panel, 3-month horizon: (N, window, 1) -> scalar, one sequence per
+(commodity, month), ~2,700 training sequences.
+
+The multivariate shape and h=1 were evaluated and dropped.
+
+CAVEAT: this model early-stops almost immediately — validation loss stops
+improving after the first epoch, i.e. it converges to predicting the mean. Its
+scores look acceptable only because "predict no change" is a strong baseline on
+monthly index data. Treat it as the comparison arm, not as a working sequence
+model. XGBoost pooled is what should be served.
 
 Kept deliberately small (32 hidden units, 1 layer, dropout) — with 120 months of
 history, capacity buys memorisation, not skill.
 
     python lstm_model.py
-    python lstm_model.py --shape pooled --horizon 1
 """
 from __future__ import annotations
 
@@ -50,28 +55,29 @@ class LSTMForecaster(nn.Module):
         return self.head(self.drop(out[:, -1, :]))
 
 
-def artefact_path(shape: str, horizon: int) -> Path:
-    return ART / f"lstm_{shape}_h{horizon}.pt"
+HORIZON = 3
+SHAPE = "pooled"
 
 
-def meta_path(shape: str, horizon: int) -> Path:
-    return ART / f"lstm_{shape}_h{horizon}.meta.json"
+def artefact_path() -> Path:
+    return ART / f"lstm_{SHAPE}_h{HORIZON}.pt"
 
 
-def _load(shape: str, horizon: int):
-    if shape == "pooled":
-        X, y, sp, meta = D.make_sequences_pooled(horizon, WINDOW)
-        return X, y.reshape(-1, 1), sp, meta
-    X, Y, sp, dates = D.make_sequences_multivariate(horizon, WINDOW)
-    return X, Y, sp, dates
+def meta_path() -> Path:
+    return ART / f"lstm_{SHAPE}_h{HORIZON}.meta.json"
 
 
-def train(shape: str, horizon: int, verbose: bool = True) -> dict:
+def _load():
+    X, y, sp, meta = D.make_sequences_pooled(HORIZON, WINDOW)
+    return X, y.reshape(-1, 1), sp, meta
+
+
+def train(verbose: bool = True) -> dict:
     torch.manual_seed(SEED)
     np.random.seed(SEED)
     ART.mkdir(parents=True, exist_ok=True)
 
-    X, Y, sp, _ = _load(shape, horizon)
+    X, Y, sp, _ = _load()
     tr, va = sp == "train", sp == "val"
 
     # Standardise on TRAIN ONLY — val/test statistics must never inform scaling.
@@ -117,28 +123,31 @@ def train(shape: str, horizon: int, verbose: bool = True) -> dict:
                 break
 
     model.load_state_dict(best_state)
-    torch.save(model.state_dict(), artefact_path(shape, horizon))
-    meta = {"algo": "lstm", "shape": shape, "horizon": horizon, "window": WINDOW,
+    torch.save(model.state_dict(), artefact_path())
+    meta = {"algo": "lstm", "shape": SHAPE, "horizon": HORIZON, "window": WINDOW,
             "n_in": int(X.shape[2]), "n_out": int(Y.shape[1]),
             "x_mu": float(mu), "x_sd": float(sd),
             "y_mu": ymu.tolist(), "y_sd": ysd.tolist(),
             "n_train_rows": int(tr.sum()), "best_epoch": best_epoch,
             "best_val_mse_scaled": best,
             "hidden": HIDDEN, "layers": LAYERS, "dropout": DROPOUT}
-    meta_path(shape, horizon).write_text(json.dumps(meta, indent=2))
+    meta_path().write_text(json.dumps(meta, indent=2))
     if verbose:
-        print(f"  lstm {shape:12} h={horizon}  train_seq={int(tr.sum()):5} "
-              f"in={X.shape[2]:2} out={Y.shape[1]:2}  best_epoch={best_epoch}")
+        print(f"  lstm {SHAPE} h={HORIZON}  train_seq={int(tr.sum()):5} "
+              f"best_epoch={best_epoch}")
+        if best_epoch <= 1:
+            print("       \033[33mwarning: converged at epoch <=1 — likely "
+                  "predicting the mean\033[0m")
     return meta
 
 
-def predict(shape: str, horizon: int, split: str):
-    path = artefact_path(shape, horizon)
+def predict(split: str):
+    path = artefact_path()
     if not path.exists():
         raise SystemExit(f"missing {path} — run lstm_model.py first")
-    meta = json.loads(meta_path(shape, horizon).read_text())
+    meta = json.loads(meta_path().read_text())
 
-    X, Y, sp, extra = _load(shape, horizon)
+    X, Y, sp, extra = _load()
     mask = sp == split
     model = LSTMForecaster(meta["n_in"], meta["n_out"]).to(DEVICE)
     model.load_state_dict(torch.load(path, map_location=DEVICE))
@@ -151,31 +160,16 @@ def predict(shape: str, horizon: int, split: str):
     pred = scaled * np.asarray(meta["y_sd"]) + np.asarray(meta["y_mu"])
     yt = Y[mask]
 
-    if shape == "pooled":
-        sub = extra[mask].reset_index(drop=True)
-        long = pd.DataFrame({"date": sub["date"], "commodity": sub["commodity"],
-                             "y_true": yt.ravel(), "y_pred": pred.ravel()})
-    else:
-        names = D.commodity_names()
-        long = pd.DataFrame({
-            "date": np.repeat(np.asarray(extra)[mask], len(names)),
-            "commodity": np.tile(names, mask.sum()),
-            "y_true": yt.ravel(), "y_pred": pred.ravel()})
+    sub = extra[mask].reset_index(drop=True)
+    long = pd.DataFrame({"date": sub["date"], "commodity": sub["commodity"],
+                         "y_true": yt.ravel(), "y_pred": pred.ravel()})
     return yt.ravel(), pred.ravel(), long
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--shape", choices=["pooled", "multivariate"], default=None)
-    ap.add_argument("--horizon", type=int, choices=[1, 3], default=None)
-    args = ap.parse_args()
-
-    shapes = [args.shape] if args.shape else ["pooled", "multivariate"]
-    horizons = [args.horizon] if args.horizon else [1, 3]
-    print("training LSTM")
-    for sh in shapes:
-        for h in horizons:
-            train(sh, h)
+    argparse.ArgumentParser().parse_args()
+    print("training LSTM (pooled, h=3)")
+    train()
     print(f"\n  artefacts in {ART}")
     return 0
 
