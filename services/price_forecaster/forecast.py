@@ -9,13 +9,13 @@ THE GATE
 The model emits a point estimate of the 3-month forward return, not a
 probability. `calibrate.py` fits |y_pred| -> P(sign correct) on validation.
 A recommendation is only emitted when that confidence clears CONFIDENCE_GATE
-(default 0.70, override with PRICE_CONFIDENCE_GATE). Below it, NEUTRAL.
+(default 0.60, override with PRICE_CONFIDENCE_GATE). Below it, NEUTRAL.
 
 READ THIS BEFORE TRUSTING `confidence`
 --------------------------------------
-The calibration is fitted on 312 validation observations. At the 0.70 crossing
+The calibration is fitted on 312 validation observations. At the 0.60 crossing
 it selects the top ~5% of predictions — 17 validation rows and only 5 test rows.
-Held-out evidence at that threshold is too thin to confirm 70%, and the served
+Held-out evidence at that threshold is too thin to confirm 60%, and the served
 `confidence` is therefore a calibrated ESTIMATE, not a measured hit rate. The
 response carries `calibration` so the caller can see the realised numbers rather
 than take the estimate on faith.
@@ -29,14 +29,31 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 
 import calibrate
 import dataset as D
 import xgboost_model as X
 
 HERE = Path(__file__).resolve().parent
+REPO_ROOT = HERE.parents[1]
+
+# The root .env is the single control point for the whole project. Without this
+# the gate could only be changed by editing source, and a teammate setting
+# PRICE_CONFIDENCE_GATE in .env would be silently ignored.
+load_dotenv(REPO_ROOT / ".env")
+
 HORIZON = 3
-CONFIDENCE_GATE = float(os.getenv("PRICE_CONFIDENCE_GATE", "0.70"))
+
+# PRODUCTION MODEL. XGBoost pooled h=3 is the only artefact served.
+# The LSTM is a benchmark arm — it early-stops at epoch ~2 and converges to
+# predicting the mean, so it must never reach the serving path. `_state()`
+# asserts the loaded artefact matches this constant.
+PROD_MODEL = "xgboost_pooled_h3"
+
+# Directional-confidence gate. 0.60 is what held-out data supports; 0.70 was
+# tried and abandoned (validation 88% on 17 obs vs test 40% on 5).
+CONFIDENCE_GATE = float(os.getenv("PRICE_CONFIDENCE_GATE", "0.60"))
 
 _MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -47,6 +64,10 @@ _cache: dict[str, Any] = {}
 def _state() -> dict[str, Any]:
     if not _cache:
         model, meta = X.load_model()
+        served = f"{meta['algo']}_{meta['shape']}_h{meta['horizon']}"
+        if served != PROD_MODEL:
+            raise RuntimeError(
+                f"serving path loaded {served!r}, expected {PROD_MODEL!r}")
         matrix, _ = D.load_matrix()
         serving = D.make_serving_features()
         preds = model.predict(serving[meta["features"]])
@@ -140,7 +161,7 @@ def forecast(series: str, horizon_months: int = HORIZON) -> dict[str, Any]:
         # -- provenance, so the agent never quotes confidence bare ---------
         "horizon_months": horizon_months,
         "predicted_change_pct": round(y_pred * 100, 3),
-        "model": "xgboost_pooled_h3",
+        "model": PROD_MODEL,
         "gate": {
             "threshold": CONFIDENCE_GATE,
             "passed": bool(gated),
