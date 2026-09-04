@@ -15,8 +15,8 @@
   ],
   "n_train_rows": 2782,
   "best_epoch": 1,
-  "best_val_mse_scaled": 0.7677170634269714,
-  "hidden": 32,
-  "layers": 2,
-  "dropout": 0.2
+  "best_val_mse_scaled": 0.7697193026542664,
+  "hidden": 27,
+  "layers": 1,
+  "dropout": 0.1
 }
