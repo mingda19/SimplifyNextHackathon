@@ -1,0 +1,24 @@
+# Project-local AWS config. NO SECRETS — safe to commit, and every teammate
+# needs identical values.
+#
+# The orchestrator points AWS_CONFIG_FILE here automatically, so this file is
+# used instead of your personal ~/.aws/config. Nothing here leaks into the repo:
+# the SSO token itself is cached in ~/.aws/sso/cache/, outside the project.
+#
+#   make aws-login     -> browser SSO, refreshes the session
+#   make aws-whoami    -> confirm who you are
+#
+# Credentials are resolved and REFRESHED automatically by boto3 from the SSO
+# session. There is nothing to copy and paste, ever.
+
+[sso-session hackathon]
+sso_start_url = https://d-9667b91afb.awsapps.com/start
+sso_region = ap-southeast-1
+sso_registration_scopes = sso:account:access
+
+[profile hackathon]
+sso_session = hackathon
+sso_account_id = 088146584236
+sso_role_name = myisb01_IsbUsersPS
+region = ap-southeast-1
+output = json
