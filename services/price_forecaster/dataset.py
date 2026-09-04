@@ -119,27 +119,6 @@ def pooled_feature_cols(df: pd.DataFrame) -> list[str]:
     return [c for c in df.columns if c not in ("date", "y", "split")]
 
 
-# -------------------------------------------------- multivariate joint form --
-def make_multivariate(horizon: int, n_lags: int = 3, data_dir: Path = DATA):
-    """
-    One row per month. X = every commodity's recent returns, Y = every
-    commodity's forward return.
-
-    This is the p >> n shape: ~100 usable months against 26 x n_lags features.
-    Included for the comparison you asked for; expect it to overfit.
-    """
-    df, label = load_matrix(data_dir)
-    split_of = _assign_split(df.index, label, horizon)
-
-    ret = df.pct_change()
-    X = pd.concat({f"lag{L}": ret.shift(L - 1) for L in range(1, n_lags + 1)}, axis=1)
-    X.columns = [f"{c}__lag{L.replace('lag', '')}" for L, c in X.columns]
-    Y = df.shift(-horizon) / df - 1.0
-
-    keep = X.notna().all(axis=1) & Y.notna().all(axis=1) & split_of.notna()
-    return X[keep], Y[keep], split_of[keep]
-
-
 # --------------------------------------------------------------- sequences --
 def make_sequences_pooled(horizon: int, window: int = 12, data_dir: Path = DATA):
     """(N, window, 1) sequences of monthly returns per commodity, for the LSTM."""
@@ -169,30 +148,45 @@ def make_sequences_pooled(horizon: int, window: int = 12, data_dir: Path = DATA)
             pd.DataFrame(meta, columns=["date", "commodity", "commodity_id"]))
 
 
-def make_sequences_multivariate(horizon: int, window: int = 12, data_dir: Path = DATA):
-    """(N, window, 26) sequences -> (N, 26) forward returns."""
-    df, label = load_matrix(data_dir)
-    split_of = _assign_split(df.index, label, horizon)
-    ret = df.pct_change()
+def build_features(s: pd.Series) -> pd.DataFrame:
+    """Feature block for one commodity's index series. Backward-looking only."""
+    ret1 = s.pct_change()
+    f = pd.DataFrame(index=s.index)
+    for L in LAGS:
+        f[f"ret_{L}"] = s.pct_change(L)
+    for R in ROLLS:
+        f[f"roll_mean_{R}"] = ret1.rolling(R).mean()
+        f[f"roll_std_{R}"] = ret1.rolling(R).std()
+    f["z_12"] = (s - s.rolling(12).mean()) / s.rolling(12).std()
+    m = s.index.month
+    f["month_sin"] = np.sin(2 * np.pi * m / 12)
+    f["month_cos"] = np.cos(2 * np.pi * m / 12)
+    return f
 
-    Xs, Ys, splits, dates = [], [], [], []
-    for i in range(window, len(df)):
-        d = df.index[i]
-        sp = split_of.loc[d]
-        if pd.isna(sp):
+
+def make_serving_features(data_dir: Path = DATA) -> pd.DataFrame:
+    """
+    Features for the LATEST available month of every commodity — no target.
+
+    This is what the endpoint predicts from: the most recent observation is the
+    decision point, and the forecast lands `horizon` months after it.
+    """
+    df, _ = load_matrix(data_dir)
+    rows = []
+    for col in df.columns:
+        f = build_features(df[col])
+        last = f.dropna().iloc[-1:]
+        if last.empty:
             continue
-        win = ret.iloc[i - window + 1:i + 1].to_numpy()
-        tgt = (df.iloc[i + horizon] / df.iloc[i] - 1.0).to_numpy()
-        if np.isnan(win).any() or np.isnan(tgt).any():
-            continue
-        Xs.append(win)
-        Ys.append(tgt)
-        splits.append(sp)
-        dates.append(d)
-    return (np.asarray(Xs, dtype=np.float32),
-            np.asarray(Ys, dtype=np.float32),
-            np.asarray(splits),
-            pd.DatetimeIndex(dates))
+        r = last.copy()
+        r["commodity"] = col
+        r["as_of"] = last.index[-1]
+        r["latest_index"] = float(df[col].loc[last.index[-1]])
+        rows.append(r.reset_index(drop=True))
+    out = pd.concat(rows, ignore_index=True)
+    cats = sorted(df.columns)
+    out["commodity"] = pd.Categorical(out["commodity"], categories=cats)
+    return out
 
 
 def commodity_names(data_dir: Path = DATA) -> list[str]:

@@ -57,8 +57,7 @@ warnings.filterwarnings("ignore")
 
 HERE = Path(__file__).resolve().parent
 ALGOS = {"xgboost": xgboost_model, "lstm": lstm_model}
-SHAPES = ("pooled", "multivariate")
-HORIZONS = (1, 3)
+HORIZON = 3          # pooled panel, 3-month horizon — the only shipped config
 
 
 # ------------------------------------------------------------------ scoring --
@@ -79,7 +78,7 @@ def score(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
             "skill": 1.0 - mae / mae_zero if mae_zero > 0 else float("nan")}
 
 
-def baselines(horizon: int, split: str) -> dict[str, dict]:
+def baselines(split: str, horizon: int = HORIZON) -> dict[str, dict]:
     """Naive references computed on the same purged rows the models see."""
     df = D.make_pooled(horizon)
     sub = df[df.split == split]
@@ -92,80 +91,68 @@ def baselines(horizon: int, split: str) -> dict[str, dict]:
     return out
 
 
-def evaluate_one(algo: str, shape: str, horizon: int, split: str):
+def evaluate_one(algo: str, split: str):
     mod = ALGOS[algo]
-    if not mod.artefact_path(shape, horizon).exists():
+    if not mod.artefact_path().exists():
         return None, None
-    y_true, y_pred, long = mod.predict(shape, horizon, split)
+    y_true, y_pred, long = mod.predict(split)
     return score(y_true, y_pred), long
 
 
 # -------------------------------------------------------------------- runs --
-def run(split: str, algos, shapes, horizons, per_commodity: bool) -> int:
-    print(f"\n\033[1m  {split.upper()} SPLIT\033[0m")
+def run(split: str, algos, per_commodity: bool) -> int:
+    print(f"\n\033[1m  {split.upper()} SPLIT\033[0m   pooled panel, {HORIZON}-month horizon")
 
     rows, longs = [], {}
-    for h in horizons:
-        for name, m in baselines(h, split).items():
-            rows.append({"model": name, "shape": "-", "h": h, **m})
-        for algo in algos:
-            for shape in shapes:
-                s, long = evaluate_one(algo, shape, h, split)
-                if s is None:
-                    print(f"  (skipping {algo}/{shape}/h{h} — artefact not trained)")
-                    continue
-                rows.append({"model": algo, "shape": shape, "h": h, **s})
-                longs[(algo, shape, h)] = long
+    for name, m in baselines(split).items():
+        rows.append({"model": name, **m})
+    for algo in algos:
+        s_, long = evaluate_one(algo, split)
+        if s_ is None:
+            print(f"  (skipping {algo} — artefact not trained)")
+            continue
+        rows.append({"model": algo, **s_})
+        longs[algo] = long
 
     if not rows:
         print("  nothing to score — train the models first")
         return 1
 
     df = pd.DataFrame(rows)
-    for h in horizons:
-        part = df[df.h == h].copy()
-        if part.empty:
-            continue
-        print(f"\n  horizon = {h} month(s)")
-        print(f"  {'model':<18}{'shape':<14}{'n':>6}{'MAE':>10}{'RMSE':>10}"
-              f"{'DirAcc':>9}{'Skill':>9}")
-        print("  " + "-" * 76)
-        best_mae = part["mae"].min()
-        for _, r in part.iterrows():
-            star = " *" if r["mae"] == best_mae else "  "
-            skill = f"{r['skill']:+.3f}" if np.isfinite(r["skill"]) else "     -"
-            dacc = f"{r['dir_acc']:.1%}" if np.isfinite(r["dir_acc"]) else "    -"
-            colour = "\033[32m" if r["skill"] > 0 else "\033[31m"
-            reset = "\033[0m"
-            print(f"  {r['model']:<18}{r['shape']:<14}{r['n']:>6}"
-                  f"{r['mae']:>10.5f}{r['rmse']:>10.5f}{dacc:>9}"
-                  f"{colour}{skill:>9}{reset}{star}")
+    print(f"\n  {'model':<18}{'n':>6}{'MAE':>10}{'RMSE':>10}{'DirAcc':>9}{'Skill':>9}")
+    print("  " + "-" * 62)
+    best_mae = df["mae"].min()
+    for _, r in df.iterrows():
+        star = " *" if r["mae"] == best_mae else "  "
+        skill = f"{r['skill']:+.3f}" if np.isfinite(r["skill"]) else "     -"
+        dacc = f"{r['dir_acc']:.1%}" if np.isfinite(r["dir_acc"]) else "    -"
+        colour = "\033[32m" if r["skill"] > 0 else "\033[31m"
+        print(f"  {r['model']:<18}{r['n']:>6}{r['mae']:>10.5f}{r['rmse']:>10.5f}"
+              f"{dacc:>9}{colour}{skill:>9}\033[0m{star}")
 
-    print("\n  * lowest MAE for that horizon."
+    print("\n  * lowest MAE."
           "  Skill > 0 beats 'assume no change'; <= 0 means it does not.")
 
     if per_commodity:
-        print("\n\033[1m  PER-COMMODITY (best model by MAE per horizon)\033[0m")
-        for h in horizons:
-            part = df[(df.h == h) & (~df.model.str.startswith("baseline"))]
-            if part.empty:
-                continue
-            b = part.loc[part["mae"].idxmin()]
-            key = (b["model"], b["shape"], h)
-            long = longs.get(key)
-            if long is None:
-                continue
-            print(f"\n  h={h}  {b['model']}/{b['shape']}")
-            g = (long.assign(ae=(long.y_pred - long.y_true).abs(),
-                             hit=np.sign(long.y_pred) == np.sign(long.y_true))
-                 .groupby("commodity")
-                 .agg(mae=("ae", "mean"), dir_acc=("hit", "mean"),
-                      vol=("y_true", "std"))
-                 .sort_values("mae"))
-            print(f"    {'commodity':<20}{'MAE':>9}{'DirAcc':>9}{'vol':>9}")
-            for name, r in g.iterrows():
-                print(f"    {str(name):<20}{r['mae']:>9.5f}"
-                      f"{r['dir_acc']:>8.0%}{r['vol']:>9.5f}")
+        part = df[~df.model.str.startswith("baseline")]
+        if not part.empty:
+            b = part.loc[part["mae"].idxmin(), "model"]
+            long = longs.get(b)
+            if long is not None:
+                print(f"\n\033[1m  PER-COMMODITY ({b})\033[0m")
+                n_per = long.groupby("commodity").size().max()
+                print(f"  \033[33mnote: only {n_per} observations per commodity — "
+                      f"per-commodity DirAcc is very noisy\033[0m")
+                g = (long.assign(ae=(long.y_pred - long.y_true).abs(),
+                                 hit=np.sign(long.y_pred) == np.sign(long.y_true))
+                     .groupby("commodity")
+                     .agg(mae=("ae", "mean"), dir_acc=("hit", "mean"),
+                          vol=("y_true", "std"))
+                     .sort_values("mae"))
+                print(f"\n    {'commodity':<20}{'MAE':>9}{'DirAcc':>9}{'vol':>9}")
+                for name, r in g.iterrows():
+                    print(f"    {str(name):<20}{r['mae']:>9.5f}"
+                          f"{r['dir_acc']:>8.0%}{r['vol']:>9.5f}")
     return 0
 
 
@@ -176,8 +163,6 @@ def main() -> int:
     g.add_argument("--val", action="store_true", help="score the validation split")
     g.add_argument("--test", action="store_true", help="score the test split")
     ap.add_argument("--algo", choices=list(ALGOS), default=None)
-    ap.add_argument("--shape", choices=SHAPES, default=None)
-    ap.add_argument("--horizon", type=int, choices=list(HORIZONS), default=None)
     ap.add_argument("--per-commodity", action="store_true")
     args = ap.parse_args()
 
@@ -189,10 +174,7 @@ def main() -> int:
         print("\n  \033[33mNOTE: the test split is the final held-out judgement."
               "\n  Tune on --val. Every extra look at --test erodes it.\033[0m")
 
-    return run(split,
-               [args.algo] if args.algo else list(ALGOS),
-               [args.shape] if args.shape else list(SHAPES),
-               [args.horizon] if args.horizon else list(HORIZONS),
+    return run(split, [args.algo] if args.algo else list(ALGOS),
                args.per_commodity)
 
 

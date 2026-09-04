@@ -35,25 +35,25 @@ def _get(base: str, path: str) -> Any:
 
 # ---------------------------------------------------------------- readers ---
 def get_inventory() -> list[dict[str, Any]]:
-    if settings.fake_services:
+    if settings.fake_inventory:
         return fixtures.INVENTORY
     return _get(settings.inventory_url, "/inventory")
 
 
 def get_alerts() -> dict[str, Any]:
-    if settings.fake_services:
+    if settings.fake_inventory:
         return fixtures.ALERTS
     return _get(settings.inventory_url, "/inventory/alerts")
 
 
 def get_unmet_needs() -> dict[str, Any]:
-    if settings.fake_services:
+    if settings.fake_feedback:
         return fixtures.UNMET_NEEDS
     return _get(settings.feedback_url, "/feedback/unmet-needs")
 
 
 def get_price_forecast(series: str = "Rice") -> dict[str, Any]:
-    if settings.fake_services:
+    if settings.fake_pricing:
         return fixtures.PRICE_FORECAST
     return _get(settings.pricing_url,
                 f"/price/forecast?series={series}&horizon_months=3")
@@ -116,7 +116,7 @@ class VendorError(Exception):
 
 def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     """Stage an order. Raises VendorError on a 4xx."""
-    if settings.fake_services:
+    if settings.fake_inventory:
         return _fake_vendor_call(vendor_id, sku, qty)
 
     url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/order"
