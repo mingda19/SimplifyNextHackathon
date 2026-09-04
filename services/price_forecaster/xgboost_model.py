@@ -32,7 +32,7 @@ SEED = 42
 # Deliberately small trees and heavy regularisation: 120 months of history
 # punishes anything with capacity to memorise.
 PARAMS = dict(
-    n_estimators=400, learning_rate=0.03, max_depth=3,
+    n_estimators=350, learning_rate=0.02, max_depth=3,
     subsample=0.8, colsample_bytree=0.8,
     reg_lambda=2.0, reg_alpha=0.2,
     min_child_weight=5, random_state=SEED, n_jobs=4,
