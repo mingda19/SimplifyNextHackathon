@@ -7,8 +7,11 @@ on a live LLM call.
     python -m seed.load_seed                # insert raw rows only
     python -m seed.load_seed --with-extraction   # also run extraction now
 
-Requires DATABASE_URL (and ANTHROPIC_API_KEY if --with-extraction) in the
-environment or .env. Safe to re-run: skips beneficiary_ids already present.
+Requires DATABASE_URL in the repo-root .env. --with-extraction also needs
+FAKE_LLM=0 and a live AWS SSO session (`make aws-login`) -- with FAKE_LLM=1
+(the default) every row gets the same canned extraction, which is fine for
+wiring/DB checks but not for validating extraction quality. Safe to re-run:
+skips beneficiary_ids already present.
 """
 
 from __future__ import annotations
@@ -18,12 +21,8 @@ import json
 import logging
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 from app import db
 from app.main import extract_and_store
-
-load_dotenv()
 
 logger = logging.getLogger("feedback.seed")
 logging.basicConfig(level=logging.INFO)

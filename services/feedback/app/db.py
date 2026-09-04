@@ -6,22 +6,30 @@ touch tables outside it on W's shared instance.
 
 from __future__ import annotations
 
-import os
+import re
 from contextlib import contextmanager
 
 import psycopg2
 import psycopg2.extras
 from psycopg2 import pool
 
+from app.config import settings
+
 _pool: "psycopg2.pool.SimpleConnectionPool | None" = None
+
+# The shared DATABASE_URL uses the SQLAlchemy dialect suffix (postgresql+psycopg://)
+# for the inventory service's SQLAlchemy/psycopg3 stack. This service talks to
+# Postgres directly via psycopg2, which doesn't understand that suffix -- strip
+# it rather than requiring a separately-formatted URL for this one service.
+_DIALECT_SUFFIX_RE = re.compile(r"^postgresql\+\w+://")
 
 
 def init_pool(minconn: int = 1, maxconn: int = 10) -> None:
     global _pool
     if _pool is not None:
         return
-    database_url = os.environ["DATABASE_URL"]
-    _pool = psycopg2.pool.SimpleConnectionPool(minconn, maxconn, dsn=database_url)
+    dsn = _DIALECT_SUFFIX_RE.sub("postgresql://", settings.database_url)
+    _pool = psycopg2.pool.SimpleConnectionPool(minconn, maxconn, dsn=dsn)
 
 
 @contextmanager
