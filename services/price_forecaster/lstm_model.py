@@ -34,8 +34,8 @@ SEED = 42
 WINDOW = 12
 DEVICE = torch.device("cpu")        # data is tiny; CPU is faster and deterministic
 
-HIDDEN, LAYERS, DROPOUT = 32, 2, 0.2
-EPOCHS, BATCH, LR, PATIENCE = 300, 64, 1e-3, 25
+HIDDEN, LAYERS, DROPOUT = 27, 1, 0.1
+EPOCHS, BATCH, LR, PATIENCE = 300, 60, 1e-3, 25
 
 
 class LSTMForecaster(nn.Module):
