@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Pantry — Tell Us What You Need</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #111111;
+    --accent: #0a5c36;
+    --accent-fg: #ffffff;
+    --muted: #444444;
+    --border: #cccccc;
+    --danger: #8a1f11;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "Noto Sans", "Noto Sans SC", "Noto Sans Tamil", sans-serif;
+    font-size: 21px;
+    line-height: 1.5;
+    min-height: 100%;
+  }
+  .app {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .screen { display: none; flex: 1; flex-direction: column; }
+  .screen.active { display: flex; }
+
+  h1 {
+    font-size: 30px;
+    margin: 8px 0 24px;
+    color: var(--accent);
+  }
+  p.prompt {
+    font-size: 24px;
+    margin: 0 0 28px;
+  }
+  .lang-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  button {
+    font-family: inherit;
+    font-size: 22px;
+    min-height: 76px;
+    min-width: 76px;
+    border-radius: 14px;
+    border: 3px solid var(--accent);
+    background: var(--bg);
+    color: var(--accent);
+    padding: 12px 16px;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  button.primary:active { opacity: 0.85; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+
+  textarea {
+    width: 100%;
+    font-family: inherit;
+    font-size: 24px;
+    line-height: 1.5;
+    padding: 16px;
+    min-height: 220px;
+    border: 3px solid var(--border);
+    border-radius: 14px;
+    resize: vertical;
+  }
+  textarea:focus { border-color: var(--accent); outline: none; }
+
+  .mic-row { display: flex; align-items: center; gap: 16px; margin-top: 16px; }
+  .mic-btn {
+    border-radius: 50%;
+    width: 88px; height: 88px;
+    min-width: 88px;
+    font-size: 34px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .mic-btn.recording {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--accent-fg);
+  }
+  .mic-hint { font-size: 18px; color: var(--muted); }
+
+  .nav-row {
+    margin-top: auto;
+    display: flex;
+    gap: 16px;
+    padding-top: 24px;
+  }
+  .nav-row button { flex: 1; }
+
+  .review-box {
+    border: 3px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    font-size: 22px;
+    white-space: pre-wrap;
+    margin-bottom: 16px;
+  }
+
+  .thankyou {
+    text-align: center;
+    margin-top: 40px;
+  }
+  .thankyou .check {
+    font-size: 64px;
+    color: var(--accent);
+  }
+
+  .status-line {
+    font-size: 18px;
+    color: var(--muted);
+    margin-top: 12px;
+    min-height: 24px;
+  }
+  .status-line.error { color: var(--danger); }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f0f;
+      --fg: #f5f5f5;
+      --accent: #4fd08a;
+      --accent-fg: #06210f;
+      --muted: #b8b8b8;
+      --border: #444444;
+      --danger: #ff8a75;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- SCREEN 1: language picker -->
+  <section class="screen active" id="screen-lang">
+    <h1>Pantry</h1>
+    <p class="prompt">Choose your language / 选择语言 / Pilih bahasa / மொழியைத் தேர்ந்தெடுக்கவும்</p>
+    <div class="lang-grid">
+      <button class="primary" data-lang="en">English</button>
+      <button class="primary" data-lang="zh">中文</button>
+      <button class="primary" data-lang="ms">Bahasa Melayu</button>
+      <button class="primary" data-lang="ta">தமிழ்</button>
+    </div>
+  </section>
+
+  <!-- SCREEN 2: message input -->
+  <section class="screen" id="screen-message">
+    <h1 data-t="title">Pantry</h1>
+    <p class="prompt" data-t="messagePrompt">Tell us what you need</p>
+    <textarea id="message-text" data-t-placeholder="messagePlaceholder"
+      placeholder="Type here, or press the microphone to speak"></textarea>
+    <div class="mic-row">
+      <button class="mic-btn" id="mic-btn" aria-label="Voice input">🎤</button>
+      <span class="mic-hint" id="mic-hint" data-t="micHint">Tap to speak</span>
+    </div>
+    <div class="nav-row">
+      <button id="back-to-lang" data-t="back">Back</button>
+      <button class="primary" id="to-review" data-t="next">Next</button>
+    </div>
+  </section>
+
+  <!-- SCREEN 3: review + submit -->
+  <section class="screen" id="screen-review">
+    <h1 data-t="title">Pantry</h1>
+    <p class="prompt" data-t="reviewPrompt">Review your message</p>
+    <div class="review-box" id="review-text"></div>
+    <div class="nav-row">
+      <button id="back-to-message" data-t="edit">Edit</button>
+      <button class="primary" id="submit-btn" data-t="submit">Submit</button>
+    </div>
+    <div class="status-line" id="status-line"></div>
+  </section>
+
+  <!-- SCREEN 4: thank you -->
+  <section class="screen" id="screen-done">
+    <div class="thankyou">
+      <div class="check">✓</div>
+      <h1 data-t="title">Pantry</h1>
+      <p class="prompt" data-t="thankYou">Thank you! We received your message.</p>
+      <button class="primary" id="send-another" data-t="sendAnother">Send another message</button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // Set window.FEEDBACK_API_BASE in an earlier inline script tag to override
+  // this default, e.g. for pointing the demo build at a deployed API host.
+  var API_BASE = window.FEEDBACK_API_BASE || "http://localhost:8001";
+
+  var TRANSLATIONS = {
+    en: {
+      title: "Pantry",
+      messagePrompt: "Tell us what you need",
+      messagePlaceholder: "Type here, or press the microphone to speak",
+      micHint: "Tap to speak",
+      micHintRecording: "Listening... tap to stop",
+      micUnsupported: "Voice input not available on this device",
+      back: "Back",
+      next: "Next",
+      reviewPrompt: "Review your message",
+      edit: "Edit",
+      submit: "Submit",
+      submitting: "Sending...",
+      submitError: "Could not send. Please try again.",
+      thankYou: "Thank you! We received your message.",
+      sendAnother: "Send another message",
+      emptyError: "Please type or speak a message first."
+    },
+    zh: {
+      title: "Pantry",
+      messagePrompt: "请告诉我们您需要什么",
+      messagePlaceholder: "请在此输入，或按麦克风说话",
+      micHint: "点击说话",
+      micHintRecording: "正在聆听... 点击停止",
+      micUnsupported: "此设备不支持语音输入",
+      back: "返回",
+      next: "下一步",
+      reviewPrompt: "请检查您的消息",
+      edit: "修改",
+      submit: "提交",
+      submitting: "发送中...",
+      submitError: "发送失败，请重试。",
+      thankYou: "谢谢！我们已收到您的消息。",
+      sendAnother: "再发一条消息",
+      emptyError: "请先输入或说出您的消息。"
+    },
+    ms: {
+      title: "Pantry",
+      messagePrompt: "Beritahu kami apa yang anda perlukan",
+      messagePlaceholder: "Taip di sini, atau tekan mikrofon untuk bercakap",
+      micHint: "Tekan untuk bercakap",
+      micHintRecording: "Sedang mendengar... tekan untuk henti",
+      micUnsupported: "Input suara tidak tersedia pada peranti ini",
+      back: "Kembali",
+      next: "Seterusnya",
+      reviewPrompt: "Semak mesej anda",
+      edit: "Sunting",
+      submit: "Hantar",
+      submitting: "Menghantar...",
+      submitError: "Gagal menghantar. Sila cuba lagi.",
+      thankYou: "Terima kasih! Kami telah menerima mesej anda.",
+      sendAnother: "Hantar mesej lain",
+      emptyError: "Sila taip atau cakap mesej dahulu."
+    },
+    ta: {
+      title: "Pantry",
+      messagePrompt: "உங்களுக்கு என்ன தேவை என்று எங்களுக்குச் சொல்லுங்கள்",
+      messagePlaceholder: "இங்கே தட்டச்சு செய்யவும் அல்லது பேச மைக்ரோஃபோனை அழுத்தவும்",
+      micHint: "பேச தட்டவும்",
+      micHintRecording: "கேட்கிறது... நிறுத்த தட்டவும்",
+      micUnsupported: "இந்த சாதனத்தில் குரல் உள்ளீடு கிடைக்கவில்லை",
+      back: "பின்செல்",
+      next: "அடுத்து",
+      reviewPrompt: "உங்கள் செய்தியை மதிப்பாய்வு செய்யவும்",
+      edit: "திருத்து",
+      submit: "சமர்ப்பிக்கவும்",
+      submitting: "அனுப்புகிறது...",
+      submitError: "அனுப்ப முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
+      thankYou: "நன்றி! உங்கள் செய்தி எங்களுக்குக் கிடைத்தது.",
+      sendAnother: "மற்றொரு செய்தி அனுப்பவும்",
+      emptyError: "முதலில் தட்டச்சு செய்யவும் அல்லது பேசவும்."
+    }
+  };
+
+  var SPEECH_LANG = { en: "en-SG", zh: "zh-CN", ms: "ms-MY", ta: "ta-IN" };
+
+  var state = { lang: "en", text: "" };
+
+  function t(key) {
+    return (TRANSLATIONS[state.lang] && TRANSLATIONS[state.lang][key]) || TRANSLATIONS.en[key];
+  }
+
+  function applyTranslations() {
+    document.querySelectorAll("[data-t]").forEach(function (el) {
+      el.textContent = t(el.getAttribute("data-t"));
+    });
+    document.querySelectorAll("[data-t-placeholder]").forEach(function (el) {
+      el.placeholder = t(el.getAttribute("data-t-placeholder"));
+    });
+    document.getElementById("app").setAttribute("lang", state.lang);
+  }
+
+  function showScreen(id) {
+    document.querySelectorAll(".screen").forEach(function (s) {
+      s.classList.toggle("active", s.id === id);
+    });
+  }
+
+  function getOrCreateBeneficiaryId() {
+    var key = "pantry_beneficiary_id";
+    var id = localStorage.getItem(key);
+    if (!id) {
+      id = "anon-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      localStorage.setItem(key, id);
+    }
+    return id;
+  }
+
+  // --- language picker ---
+  document.querySelectorAll("[data-lang]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      state.lang = btn.getAttribute("data-lang");
+      applyTranslations();
+      showScreen("screen-message");
+    });
+  });
+
+  // --- voice input (feature-detected) ---
+  var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognizer = null;
+  var recording = false;
+  var micBtn = document.getElementById("mic-btn");
+  var micHint = document.getElementById("mic-hint");
+  var textarea = document.getElementById("message-text");
+
+  if (!SpeechRecognitionCtor) {
+    micBtn.disabled = true;
+    micHint.textContent = t("micUnsupported");
+  } else {
+    micBtn.addEventListener("click", function () {
+      if (recording) {
+        recognizer && recognizer.stop();
+        return;
+      }
+      recognizer = new SpeechRecognitionCtor();
+      recognizer.lang = SPEECH_LANG[state.lang] || "en-SG";
+      recognizer.interimResults = false;
+      recognizer.maxAlternatives = 1;
+
+      recognizer.onstart = function () {
+        recording = true;
+        micBtn.classList.add("recording");
+        micHint.textContent = t("micHintRecording");
+      };
+      recognizer.onerror = function () {
+        recording = false;
+        micBtn.classList.remove("recording");
+        micHint.textContent = t("micHint");
+      };
+      recognizer.onend = function () {
+        recording = false;
+        micBtn.classList.remove("recording");
+        micHint.textContent = t("micHint");
+      };
+      recognizer.onresult = function (event) {
+        var transcript = event.results[0][0].transcript;
+        textarea.value = (textarea.value ? textarea.value + " " : "") + transcript;
+      };
+      recognizer.start();
+    });
+  }
+
+  // --- message -> review ---
+  document.getElementById("back-to-lang").addEventListener("click", function () {
+    showScreen("screen-lang");
+  });
+
+  document.getElementById("to-review").addEventListener("click", function () {
+    var text = textarea.value.trim();
+    var statusEl = document.getElementById("status-line");
+    if (!text) {
+      statusEl.textContent = t("emptyError");
+      statusEl.classList.add("error");
+      return;
+    }
+    statusEl.textContent = "";
+    statusEl.classList.remove("error");
+    state.text = text;
+    document.getElementById("review-text").textContent = text;
+    showScreen("screen-review");
+  });
+
+  document.getElementById("back-to-message").addEventListener("click", function () {
+    showScreen("screen-message");
+  });
+
+  // --- submit ---
+  document.getElementById("submit-btn").addEventListener("click", function () {
+    var statusEl = document.getElementById("status-line");
+    var submitBtn = document.getElementById("submit-btn");
+    statusEl.classList.remove("error");
+    statusEl.textContent = t("submitting");
+    submitBtn.disabled = true;
+
+    fetch(API_BASE + "/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        beneficiary_id: getOrCreateBeneficiaryId(),
+        text: state.text,
+        lang: state.lang,
+        channel: "web"
+      })
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("bad status " + res.status);
+        return res.json();
+      })
+      .then(function () {
+        submitBtn.disabled = false;
+        statusEl.textContent = "";
+        showScreen("screen-done");
+      })
+      .catch(function () {
+        submitBtn.disabled = false;
+        statusEl.textContent = t("submitError");
+        statusEl.classList.add("error");
+      });
+  });
+
+  document.getElementById("send-another").addEventListener("click", function () {
+    state.text = "";
+    textarea.value = "";
+    document.getElementById("status-line").textContent = "";
+    showScreen("screen-message");
+  });
+
+  applyTranslations();
+})();
+</script>
+</body>
+</html>
