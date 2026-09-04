@@ -7,8 +7,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
-load_dotenv(ROOT.parent / ".env")
+REPO_ROOT = ROOT.parents[1]          # services/orchestrator -> services -> repo
+AWS_DIR = REPO_ROOT / "aws"
+
+# One global .env at the repo root. There is no per-service .env any more.
+load_dotenv(REPO_ROOT / ".env")
+
+# Point the AWS SDKs at the project-local config so every teammate resolves the
+# same SSO profile, and a personal ~/.aws/config can't silently shadow it.
+# Credentials themselves are never stored here — boto3 pulls them from the SSO
+# token cache in ~/.aws/sso/cache/ and refreshes them on its own.
+os.environ.setdefault("AWS_CONFIG_FILE", str(AWS_DIR / "config"))
+os.environ.setdefault("AWS_SHARED_CREDENTIALS_FILE", str(AWS_DIR / "credentials"))
 
 
 def _flag(name: str, default: str = "0") -> bool:
@@ -24,9 +34,15 @@ class Settings:
     fake_services: bool = _flag("FAKE_SERVICES", "1")
     max_session_spend_usd: float = float(os.getenv("MAX_SESSION_SPEND_USD", "2.00"))
     ledger_path: Path = ROOT / "spend.json"
+    aws_dir: Path = AWS_DIR
 
-    # --- bedrock ----------------------------------------------------------
-    aws_region: str = os.getenv("AWS_REGION", "us-east-1")
+    # --- aws / bedrock ----------------------------------------------------
+    # No keys. `aws_profile` resolves an SSO profile that boto3 auto-refreshes.
+    aws_profile: str | None = os.getenv("AWS_PROFILE") or None
+    aws_region: str = os.getenv("AWS_REGION", "ap-southeast-1")
+    # Inference region may differ from the SSO region — see `make check-bedrock`.
+    bedrock_region: str = os.getenv("BEDROCK_REGION") or os.getenv(
+        "AWS_REGION", "ap-southeast-1")
     # Bedrock IDs take the `anthropic.` prefix. NOT the 2024 id in the AWS deck.
     model_predict: str = os.getenv("MODEL_PREDICT", "anthropic.claude-haiku-4-5")
     model_adapt: str = os.getenv("MODEL_ADAPT", "anthropic.claude-haiku-4-5")

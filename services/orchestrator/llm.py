@@ -53,7 +53,13 @@ def _client():
     """Bedrock client, built once. Mantle — not the legacy InvokeModel path."""
     from anthropic import AnthropicBedrockMantle
 
-    return AnthropicBedrockMantle(aws_region=settings.aws_region)
+    # No static keys. boto3 resolves the SSO profile and refreshes the session
+    # token itself, so a 12-hour expiry is transparent for as long as the SSO
+    # login is alive. `make aws-login` renews it.
+    return AnthropicBedrockMantle(
+        aws_profile=settings.aws_profile,
+        aws_region=settings.bedrock_region,
+    )
 
 
 def _call(model: str, max_tokens: int, system: str, user: str, schema: type):

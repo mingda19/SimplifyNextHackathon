@@ -1,10 +1,11 @@
 VENV := .venv
-PY   := $(VENV)/bin/python
+# the orchestrator package lives under services/
+PY   := PYTHONPATH=services $(VENV)/bin/python
 
-.PHONY: install run run-a demo test ledger reset-ledger creds clean
+.PHONY: aws-login aws-whoami aws-export check-bedrock install run run-a demo test ledger reset-ledger creds clean
 
 install:
-	python3 -m venv $(VENV) && $(PY) -m pip install -q -U pip -r requirements.txt
+	python3 -m venv $(VENV) && $(VENV)/bin/python -m pip install -q -U pip -r requirements.txt
 
 run:            ## interactive approval, fake mode, $0
 	$(PY) -m orchestrator
@@ -16,7 +17,7 @@ run-a:          ## donation-fed charity (Type A)
 	$(PY) -m orchestrator --type A --approve
 
 test:
-	$(PY) -m pytest orchestrator/tests/ -q
+	$(PY) -m pytest services/orchestrator/tests/ -q
 
 ledger:
 	$(PY) -m orchestrator --ledger
@@ -24,13 +25,23 @@ ledger:
 reset-ledger:
 	$(PY) -m orchestrator --reset-ledger
 
-creds:          ## how to refresh the 12-hour AWS keys
-	@echo "1. https://d-9667b91afb.awsapps.com/start  ->  Accounts tab"
-	@echo "2. Expand SandboxAccount001  ->  'Access keys'"
-	@echo "3. Copy Option 1 (env vars) into orchestrator/.env"
-	@echo "   ALL THREE: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN"
-	@echo "4. Region must be us-east-1"
+creds:          ## deprecated -> use `make aws-login`
+	@echo "Credentials are handled by SSO now. Run: make aws-login"
 
 clean:
-	rm -f orchestrator/checkpoints.db orchestrator/spend.json
+	rm -f services/orchestrator/checkpoints.db services/orchestrator/spend.json
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
+
+# ---- AWS SSO ---------------------------------------------------------------
+aws-login:      ## browser SSO login; refreshes the session (~12h)
+	@./scripts/aws-login.sh
+
+aws-whoami:     ## who am I, and is the session still valid
+	@AWS_CONFIG_FILE=./aws/config aws sts get-caller-identity \
+		--profile $${AWS_PROFILE:-hackathon} --output table
+
+check-bedrock:  ## which region actually serves Claude (free, no tokens spent)
+	@$(PY) scripts/check_bedrock.py
+
+aws-export:     ## write short-lived static keys to aws/credentials (rarely needed)
+	@./scripts/aws-export-credentials.sh

@@ -1,6 +1,13 @@
 data/
 .env
 
+# AWS — credentials NEVER get committed. aws/config has no secrets and is
+# tracked so the whole team resolves the same SSO profile.
+aws/credentials
+aws/sso/
+aws/cli/
+!aws/config
+
 # runtime artefacts — never commit
 *.db
 spend.json
