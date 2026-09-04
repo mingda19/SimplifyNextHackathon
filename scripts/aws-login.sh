@@ -19,24 +19,24 @@ if ! aws configure list-profiles 2>/dev/null | grep -qx "$PROFILE"; then
   exit 1
 fi
 
+PYBIN="$ROOT/.venv/bin/python"; [ -x "$PYBIN" ] || PYBIN=python3
+
 if aws sts get-caller-identity --profile "$PROFILE" >/dev/null 2>&1; then
   echo "SSO session already valid."
 else
-  echo "Opening browser for SSO login (profile: $PROFILE)..."
-  if ! aws sso login --profile "$PROFILE"; then
-    cat <<'HINT'
+  # Log in against the sso-session, NOT the profile. This still works when the
+  # profile's account/role are wrong, which is what lets us self-heal below.
+  echo "Opening browser for SSO login..."
+  aws sso login --sso-session hackathon || {
+    echo "SSO login itself failed — check the start URL in aws/config."; exit 1; }
 
-Login failed. The usual cause is a wrong sso_account_id or sso_role_name in
-aws/config. Rediscover them interactively — it lists the accounts and roles
-your login can actually see:
-
-    AWS_CONFIG_FILE=./aws/config aws configure sso --profile hackathon
-
-Use these when prompted:
-    SSO start URL  : https://d-9667b91afb.awsapps.com/start
-    SSO region     : ap-southeast-1
-HINT
-    exit 1
+  # The token is now valid but the profile may still name a role that does not
+  # exist on this Identity Center instance (the deck's screenshot shows a
+  # different one). That surfaces as GetRoleCredentials AccessDenied / exit 254.
+  if ! aws sts get-caller-identity --profile "$PROFILE" >/dev/null 2>&1; then
+    echo
+    echo "Token is valid but the profile's account/role is wrong. Repairing..."
+    "$PYBIN" "$ROOT/scripts/aws_discover.py" || exit 1
   fi
 fi
 

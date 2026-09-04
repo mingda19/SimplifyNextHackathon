@@ -19,6 +19,6 @@ sso_registration_scopes = sso:account:access
 [profile hackathon]
 sso_session = hackathon
 sso_account_id = 088146584236
-sso_role_name = myisb01_IsbUsersPS
+sso_role_name = hack2026_IsbUsersPS
 region = ap-southeast-1
 output = json
