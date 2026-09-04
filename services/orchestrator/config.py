@@ -32,6 +32,11 @@ class Settings:
     # FAKE_LLM=1 is the default ON PURPOSE. Turning it off spends real money.
     fake_llm: bool = _flag("FAKE_LLM", "1")
     fake_services: bool = _flag("FAKE_SERVICES", "1")
+    # Per-service overrides, each defaulting to FAKE_SERVICES. Lets workstreams
+    # be integrated one at a time as they land instead of all-or-nothing.
+    fake_inventory: bool = _flag("FAKE_INVENTORY", os.getenv("FAKE_SERVICES", "1"))
+    fake_feedback: bool = _flag("FAKE_FEEDBACK", os.getenv("FAKE_SERVICES", "1"))
+    fake_pricing: bool = _flag("FAKE_PRICING", os.getenv("FAKE_SERVICES", "1"))
     max_session_spend_usd: float = float(os.getenv("MAX_SESSION_SPEND_USD", "2.00"))
     ledger_path: Path = ROOT / "spend.json"
     aws_dir: Path = AWS_DIR

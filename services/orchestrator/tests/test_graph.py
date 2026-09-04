@@ -23,7 +23,8 @@ def isolate(tmp_path, monkeypatch):
     """Every test gets its own ledger and checkpoint DB."""
     monkeypatch.setattr(settings, "ledger_path", tmp_path / "spend.json")
     monkeypatch.setattr(settings, "fake_llm", True)
-    monkeypatch.setattr(settings, "fake_services", True)
+    for flag in ("fake_services", "fake_inventory", "fake_feedback", "fake_pricing"):
+        monkeypatch.setattr(settings, flag, True)
     from orchestrator.nodes.commit import reset_idempotency
     reset_idempotency()
     yield
@@ -78,6 +79,15 @@ def test_route_approval_gates_commit():
 
 
 # ------------------------------------------------------------- end-to-end --
+def test_only_pricing_live_still_degrades_cleanly(graph, monkeypatch):
+    """Per-service flags let workstreams integrate one at a time."""
+    monkeypatch.setattr(settings, "fake_pricing", False)
+    monkeypatch.setattr(settings, "pricing_url", "http://127.0.0.1:9")
+    res, summary = run(graph, "e2e-partial", "B", "approved")
+    assert res["degraded_services"] == ["price_forecast"]
+    assert res["outcome"]["kind"] == "purchase_order"
+
+
 def test_full_run_commits_purchase_order(graph):
     res, summary = run(graph, "e2e-b", "B", "approved")
     assert summary is not None, "graph must pause for human approval"
@@ -135,7 +145,8 @@ def test_retry_cap_escalates_instead_of_looping(graph, monkeypatch):
 
 
 def test_degrades_when_services_are_down(graph, monkeypatch):
-    monkeypatch.setattr(settings, "fake_services", False)
+    for flag in ("fake_services", "fake_inventory", "fake_feedback", "fake_pricing"):
+        monkeypatch.setattr(settings, flag, False)
     monkeypatch.setattr(settings, "inventory_url", "http://127.0.0.1:9")
     monkeypatch.setattr(settings, "feedback_url", "http://127.0.0.1:9")
     monkeypatch.setattr(settings, "pricing_url", "http://127.0.0.1:9")

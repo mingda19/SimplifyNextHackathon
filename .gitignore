@@ -1,4 +1,4 @@
-data/
+data/*.csv
 .env
 
 # AWS — credentials NEVER get committed. aws/config has no secrets and is

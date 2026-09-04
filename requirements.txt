@@ -5,3 +5,7 @@ httpx>=0.28
 pydantic>=2.13
 python-dotenv>=1.2
 pytest>=8
+pandas>=2.2
+scikit-learn>=1.5
+xgboost>=2.1
+torch>=2.2

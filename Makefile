@@ -48,3 +48,15 @@ check-bedrock-live: ## ONE 1-token real call to confirm the model id (~$$0.00002
 
 aws-export:     ## write short-lived static keys to aws/credentials (rarely needed)
 	@./scripts/aws-export-credentials.sh
+
+# ---- price_forecaster (workstream 3) ---------------------------------------
+forecaster-train:  ## retrain both artefacts + refit the confidence calibrator
+	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/python xgboost_model.py \
+	  && PYTHONPATH=. ../../$(VENV)/bin/python lstm_model.py \
+	  && PYTHONPATH=. ../../$(VENV)/bin/python calibrate.py
+
+forecaster-eval:   ## score both artefacts on validation
+	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/python evaluator.py --val
+
+forecaster-serve:  ## run the endpoint on :8003
+	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/uvicorn app:app --port 8003
