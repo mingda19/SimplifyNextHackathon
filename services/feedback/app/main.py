@@ -16,19 +16,28 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, Query
+from fastapi import BackgroundTasks, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app import db
+from app.config import settings
 from app.extract import resolve_skus, run_extraction, run_sentiment_classifier
-
-load_dotenv()
 
 logger = logging.getLogger("feedback.main")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Pantry Feedback Service")
+
+# The intake screen (frontend/intake) is a static file served from a
+# different origin/port than this API -- no cookies/auth involved, so a
+# permissive dev CORS policy is fine here.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class FeedbackIn(BaseModel):
@@ -224,3 +233,9 @@ def get_metrics():
         "extraction_failed": row["failed_count"],
         "extraction_pending": row["pending_count"],
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="0.0.0.0", port=settings.feedback_service_port, reload=True)

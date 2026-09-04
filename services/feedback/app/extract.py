@@ -25,20 +25,17 @@ app/matcher.py). That's the authoritative join key M's aggregation depends on.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal, Optional
 
-import anthropic
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.matcher import match_term
 
 logger = logging.getLogger("feedback.extract")
-
-MODEL_ID = "claude-opus-5"
 
 SENTIMENT_VOCAB = ("negative", "neutral", "positive")
 LANG_VOCAB = ("en", "zh", "ms", "ta", "other")
@@ -114,13 +111,43 @@ summary_en: one plain-English sentence summarizing the feedback, for a human
 """
 
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic()
+# A single canned extraction for FAKE_LLM=1 (the repo-wide default). Exists so
+# this service can be smoke-tested for $0 before AWS SSO is even set up --
+# mirrors orchestrator's fixtures.FAKE_PLAN, not meant to represent extraction
+# quality, just to exercise the DB/matcher wiring deterministically. Includes
+# one clean match ("rice") and one qualifier-guard near-miss ("gluten free
+# bread") so resolve_skus() has something real to chew on downstream.
+FAKE_EXTRACTION = Extraction(
+    sentiment="negative",
+    urgency=3,
+    categories=["staples", "dietary_accessibility"],
+    mentioned_skus=[],
+    mentioned_terms=["rice", "gluten free bread"],
+    unmet_needs=[
+        UnmetNeed(need="gluten-free bread", confidence=0.7, suggested_category="dietary_accessibility")
+    ],
+    detected_lang="en",
+    summary_en="FAKE_LLM=1 canned extraction -- not a real Bedrock call.",
+)
 
 
-def _extract_once(
-    client: anthropic.Anthropic, text: str, lang: Optional[str], previous_error: Optional[str]
-) -> Extraction:
+@lru_cache(maxsize=1)
+def _client():
+    """Bedrock client, built once. Mantle -- not the legacy InvokeModel path.
+
+    No static keys -- boto3 resolves the SSO profile (`make aws-login`) the
+    same way services/orchestrator/llm.py does. Mirrors that module's client
+    construction exactly so both services share one AWS SSO setup.
+    """
+    from anthropic import AnthropicBedrockMantle
+
+    return AnthropicBedrockMantle(
+        aws_profile=settings.aws_profile,
+        aws_region=settings.bedrock_region,
+    )
+
+
+def _extract_once(text: str, lang: Optional[str], previous_error: Optional[str]) -> Extraction:
     user_content = f"Beneficiary feedback (submitted lang hint: {lang or 'unknown'}):\n\n{text}"
     messages = [{"role": "user", "content": user_content}]
     if previous_error:
@@ -134,9 +161,9 @@ def _extract_once(
             }
         )
 
-    response = client.messages.parse(
-        model=MODEL_ID,
-        max_tokens=2048,
+    response = _client().messages.parse(
+        model=settings.model_extract,
+        max_tokens=settings.max_tokens_extract,
         system=SYSTEM_PROMPT,
         messages=messages,
         output_format=Extraction,
@@ -146,13 +173,16 @@ def _extract_once(
 
 def run_extraction(text: str, lang: Optional[str]) -> tuple[Extraction, bool]:
     """Returns (extraction, schema_valid_first_try). Raises on total failure."""
-    client = _client()
+    if settings.fake_llm:
+        logger.info("FAKE_LLM=1 -- returning canned extraction (no Bedrock call)")
+        return FAKE_EXTRACTION, True
+
     try:
-        extraction = _extract_once(client, text, lang, previous_error=None)
+        extraction = _extract_once(text, lang, previous_error=None)
         return extraction, True
     except Exception as first_error:  # noqa: BLE001 -- any parse/validation failure retries once
         logger.warning("extraction failed validation on first try: %s", first_error)
-        extraction = _extract_once(client, text, lang, previous_error=str(first_error))
+        extraction = _extract_once(text, lang, previous_error=str(first_error))
         return extraction, False
 
 
@@ -224,7 +254,7 @@ def resolve_skus(mentioned_terms: list[str]) -> list[SkuResolution]:
     since the service must be able to demo with it switched off entirely.
     """
     llm_adjudicate = None
-    if os.environ.get("MATCHER_LLM_ADJUDICATION", "false").lower() == "true":
+    if settings.matcher_llm_adjudication:
         llm_adjudicate = _llm_adjudicate
 
     results = []
@@ -244,10 +274,15 @@ def resolve_skus(mentioned_terms: list[str]) -> list[SkuResolution]:
 
 
 def _llm_adjudicate(term: str, sku_codes: list[str]) -> Optional[tuple[str, float]]:
-    """Layer 4: only called for terms layers 1-3 couldn't resolve. Opt-in."""
-    client = _client()
-    response = client.messages.create(
-        model=MODEL_ID,
+    """Layer 4: only called for terms layers 1-3 couldn't resolve. Opt-in, and
+    still gated on FAKE_LLM -- MATCHER_LLM_ADJUDICATION=true must not spend
+    money when the repo-wide kill switch is on.
+    """
+    if settings.fake_llm:
+        return None
+
+    response = _client().messages.create(
+        model=settings.model_extract,
         max_tokens=100,
         system=(
             "Given a beneficiary's term for a food/hygiene item and a list of SKU "
