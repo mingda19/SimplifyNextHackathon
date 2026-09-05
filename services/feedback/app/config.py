@@ -33,13 +33,15 @@ class Settings:
 
     aws_profile: str | None = os.getenv("AWS_PROFILE") or None
     bedrock_region: str = os.getenv("BEDROCK_REGION") or os.getenv(
-        "AWS_REGION", "ap-southeast-1")
-    # Same model the orchestrator already has confirmed working on this
-    # account's Bedrock access -- not guessing at a different one blind.
-    model_extract: str = os.getenv("MODEL_EXTRACT", "anthropic.claude-haiku-4-5")
+        "AWS_REGION", "us-east-1")
+    # bedrock-runtime InvokeModel needs the INFERENCE PROFILE id (us. prefix).
+    # The bare `anthropic.claude-haiku-4-5` is rejected on this path -- Haiku 4.5
+    # is INFERENCE_PROFILE-only in us-east-1. Matches orchestrator/config.py.
+    model_extract: str = os.getenv("MODEL_EXTRACT", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
     max_tokens_extract: int = int(os.getenv("MAX_TOKENS_EXTRACT", "2048"))
 
     database_url: str = os.getenv("DATABASE_URL", "")
+    inventory_url: str = os.getenv("INVENTORY_URL", "http://localhost:8000")
     feedback_service_port: int = int(os.getenv("FEEDBACK_SERVICE_PORT", "8002"))
     matcher_llm_adjudication: bool = _flag("MATCHER_LLM_ADJUDICATION", "false")
 

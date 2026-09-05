@@ -1,13 +1,11 @@
-"""Golden cases for the SKU matcher.
+"""Golden test set for the SKU matcher. Run with:
 
-UPDATED 6 Sep: expectations now use the REAL inventory catalogue codes from
-workstream 1 (GET /inventory), not the old 20-SKU stub in app/skus.py. Of the
-stub's codes only RICE-5KG and SUGAR-1KG ever existed in the seeded inventory,
-so every other expectation here was asserting a SKU that does not exist.
+    python -m tests.test_matcher      (from services/feedback/)
 
-BREAD-LOAF and SOFT-FOOD-PACK have NO real equivalent — the charity stocks
-neither bread nor a soft/pureed meal pack. Those cases now assert an unmatched
-result, which is the correct and more valuable answer: a need nobody stocks for.
+Zero false matches is the bar, not "mostly passes" -- a false match silently
+erases a real unmet need downstream (see app/matcher.py module docstring), so
+every case where the expected answer is None is exercised on its own line and
+reported separately from ordinary failures.
 """
 
 import unittest
@@ -24,43 +22,43 @@ GOLDEN_CASES = [
     ("Malay", "beras", "RICE-5KG", None, None),
     ("Tamil (transliterated)", "arisi", "RICE-5KG", None, None),
     ("sugar, Malay", "gula", "SUGAR-1KG", None, None),
-    ("coffee, Mandarin", "咖啡", "COFFEE-500G", None, None),
-    ("chicken, Malay", "ayam", "CHICKEN-FROZEN-1KG", None, None),
-    ("fish, Malay", "ikan", "FISH-FROZEN-1KG", None, None),
-    ("diapers, Mandarin", "尿布", "DIAPERS-M-40PK", None, None),
-    ("porridge, Mandarin", "粥", "OATS-1KG", None, None),
-    ("longest-alias preference", "cooking oil", "OIL-2L", None, None),
+    ("coffee, Mandarin", "咖啡", "INSTANT-COFFEE", None, None),
+    ("chicken, Malay", "ayam", "CHICKEN-FROZEN", None, None),
+    ("fish, Malay", "ikan", "FISH-FROZEN", None, None),
+    ("diapers, Mandarin", "尿布", "DIAPERS-ADULT", None, None),
+    ("porridge, Mandarin", "粥", "INSTANT-CEREAL", None, None),
+    ("longest-alias preference", "cooking oil", "COOKING-OIL-1L", None, None),
     # --- layer 3: fuzzy / typo / voice-transcription noise ---
     ("typo", "rce please", "RICE-5KG", None, None),
-    ("voice-transcription noise", "cooking oyl", "OIL-2L", None, None),
-    ("plural/typo", "noodels", "NOODLES-1KG", None, None),
+    ("voice-transcription noise", "cooking oyl", "COOKING-OIL-1L", None, None),
+    ("plural/typo", "noodels", "NOODLE-INST", None, None),
     # --- qualifier guard: must refuse, not silently substitute ---
     (
-        "gluten free bread -> no bread SKU exists at all",
+        "gluten free bread -> refuse, not BREAD-LOAF",
         "gluten free bread please",
         None,
-        None,          # nothing to be near — the catalogue has no bread
-        None,
+        "BREAD-LOAF",
+        "gluten_free",
     ),
     (
         "halal baby formula -> refuse, not MILK-POWDER",
         "need halal baby formula",
         None,
-        "INFANT-FORMULA-900G",
+        "MILK-POWDER",
         "halal",
     ),
     (
         "low sodium noodles -> refuse, not NOODLE-INST",
         "low sodium noodles for my dad",
         None,
-        "NOODLES-1KG",
+        "NOODLE-INST",
         "low_sodium",
     ),
     (
         "pureed vegetables -> refuse, not VEG-LEAFY",
         "pureed vegetables needed",
         None,
-        "VEGETABLES-MIXED-1KG",
+        "VEG-LEAFY",
         "soft_texture",
     ),
     (
@@ -71,11 +69,9 @@ GOLDEN_CASES = [
         "soft_texture",
     ),
     # --- qualifier satisfied: guard must NOT block a real match ---
-    ("vegetarian qualifier satisfied", "vegetarian tofu please", "TOFU-300G", None, None),
-    # No soft/pureed meal SKU exists — this is a genuine catalogue gap and the
-    # highest-signal output of the feedback loop, not a matcher failure.
-    ("soft food is a catalogue gap", "soft food for elderly", None, None, None),
-    ("nut-free qualifier satisfied", "nut free beans", "BEANS-CANNED-400G", None, None),
+    ("vegetarian qualifier satisfied", "vegetarian tofu please", "TOFU", None, None),
+    ("soft-texture qualifier satisfied", "soft food for elderly", "SOFT-FOOD-PACK", None, None),
+    ("nut-free qualifier satisfied", "nut free beans", "CANNED-BEANS", None, None),
     # --- no SKU exists at all ---
     ("no matching SKU #1", "fresh durian please", None, None, None),
     ("no matching SKU #2", "can you get birthday cake", None, None, None),
@@ -95,35 +91,35 @@ GOLDEN_CASES = [
         "no MSG -> refuse, not CHICKEN-FROZEN",
         "no msg chicken please",
         None,
-        "CHICKEN-FROZEN-1KG",
+        "CHICKEN-FROZEN",
         "msg_free",
     ),
     (
         "soft texture (paraphrase) -> refuse, not INSTANT-CEREAL",
         "soft texture porridge please",
         None,
-        "OATS-1KG",
+        "INSTANT-CEREAL",
         "soft_texture",
     ),
     (
         "low sugar (paraphrase) -> refuse, not INSTANT-COFFEE",
         "low sugar coffee please",
         None,
-        "COFFEE-500G",
+        "INSTANT-COFFEE",
         "sugar_free",
     ),
     (
         "no sugar, Mandarin -> refuse, not MILK-POWDER",
         "无糖奶粉",
         None,
-        "INFANT-FORMULA-900G",
+        "MILK-POWDER",
         "sugar_free",
     ),
     (
         "no sugar, Malay -> refuse, not MILK-POWDER",
         "tanpa gula susu tepung",
         None,
-        "INFANT-FORMULA-900G",
+        "MILK-POWDER",
         "sugar_free",
     ),
     # --- Tamil, native script (found in WS2 Phase 1 A3/C2: the golden set's
@@ -131,7 +127,7 @@ GOLDEN_CASES = [
     # regex silently fails to match native Tamil Unicode script at all --
     # see AUDIT.md C2) ---
     ("Tamil, native script, rice", "அரிசி", "RICE-5KG", None, None),
-    ("Tamil, native script, coffee", "காபி", "COFFEE-500G", None, None),
+    ("Tamil, native script, coffee", "காபி", "INSTANT-COFFEE", None, None),
     (
         "Tamil, native script, in a sentence",
         "எனக்கு அரிசி வேணும்",
@@ -144,7 +140,7 @@ GOLDEN_CASES = [
     (
         "'no msg' substring inside 'no msgs' (text messages) must not block",
         "sorry no msgs came through, can I get some chicken",
-        "CHICKEN-FROZEN-1KG",
+        "CHICKEN-FROZEN",
         None,
         None,
     ),

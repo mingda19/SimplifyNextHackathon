@@ -57,7 +57,7 @@ class Settings:
     max_tokens_adapt: int = int(os.getenv("MAX_TOKENS_ADAPT", "2048"))
 
     # --- upstream services (workstreams 1/2/3) ----------------------------
-    inventory_url: str = os.getenv("INVENTORY_URL", "http://localhost:8001")
+    inventory_url: str = os.getenv("INVENTORY_URL", "http://localhost:8000")
     feedback_url: str = os.getenv("FEEDBACK_URL", "http://localhost:8002")
     pricing_url: str = os.getenv("PRICING_URL", "http://localhost:8003")
     http_timeout: float = float(os.getenv("HTTP_TIMEOUT", "5.0"))

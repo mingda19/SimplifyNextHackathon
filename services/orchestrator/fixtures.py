@@ -18,15 +18,15 @@ from typing import Any
 INVENTORY: list[dict[str, Any]] = [
     {"sku": "RICE-5KG", "name": "White rice 5kg", "category": "staples",
      "unit": "bag", "on_hand": 40, "reorder_point": 60, "avg_daily_draw": 5.0,
-     "unit_cost_sgd": 2.10, "preferred_vendor_id": "VEND-A",
+     "unit_cost_sgd": 2.10, "preferred_vendor_id": "VENDOR-HARVEST",
      "dspi_series": "Rice", "days_cover": 8.0},
     {"sku": "OIL-1L", "name": "Cooking oil 1L", "category": "staples",
      "unit": "bottle", "on_hand": 120, "reorder_point": 50, "avg_daily_draw": 3.0,
-     "unit_cost_sgd": 3.40, "preferred_vendor_id": "VEND-B",
+     "unit_cost_sgd": 3.40, "preferred_vendor_id": "VENDOR-COMMUNITY",
      "dspi_series": "Fixed Vegetable Fats & Oils", "days_cover": 40.0},
     {"sku": "CAN-SARDINE", "name": "Canned sardines", "category": "protein",
      "unit": "tin", "on_hand": 18, "reorder_point": 40, "avg_daily_draw": 2.0,
-     "unit_cost_sgd": 1.85, "preferred_vendor_id": "VEND-A",
+     "unit_cost_sgd": 1.85, "preferred_vendor_id": "VENDOR-HARVEST",
      "dspi_series": "Fish", "days_cover": 9.0},
 ]
 
@@ -40,9 +40,9 @@ ALERTS: dict[str, Any] = {
 }
 
 VENDORS: dict[str, dict[str, Any]] = {
-    "VEND-A": {"name": "Golden Grain Supplies", "moq_units": 250,
+    "VENDOR-HARVEST": {"name": "Golden Grain Supplies", "moq_units": 250,
                "lead_time_days": 5, "reliability": 0.94, "base_price_sgd": 2.10},
-    "VEND-B": {"name": "Harmony Food Distributors", "moq_units": 100,
+    "VENDOR-COMMUNITY": {"name": "Harmony Food Distributors", "moq_units": 100,
                "lead_time_days": 3, "reliability": 0.88, "base_price_sgd": 2.35,
                # volume break at 250 — this is what makes the switch rational
                "volume_break_qty": 250, "volume_break_price_sgd": 1.98},
@@ -95,7 +95,7 @@ FAKE_PLAN: dict[str, Any] = {
     ),
     "steps": [
         {"action": "place_order", "sku": "RICE-5KG", "qty": 200,
-         "vendor_id": "VEND-A",
+         "vendor_id": "VENDOR-HARVEST",
          "rationale": "Cover 40 days at 5 bags/day from the cheaper preferred vendor."},
         {"action": "flag_for_human", "sku": "SOFT-FOOD-GAP", "qty": 0,
          "vendor_id": None,
@@ -114,7 +114,7 @@ def fake_adaptation(step: dict[str, Any], error: dict[str, Any]) -> dict[str, An
     alts = error.get("alternatives") or []
 
     if code == "MOQ_NOT_MET":
-        min_qty = next((a.get("min_qty") for a in alts if a.get("min_qty")), 250)
+        min_qty = next((a.get("minimum_qty") or a.get("min_qty") for a in alts if a.get("minimum_qty") or a.get("min_qty")), 250)
         cheaper = next((a for a in alts if a.get("vendor_id")
                         and a.get("unit_price_sgd", 99) < 2.10), None)
         revised["qty"] = min_qty

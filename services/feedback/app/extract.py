@@ -133,15 +133,18 @@ FAKE_EXTRACTION = Extraction(
 
 @lru_cache(maxsize=1)
 def _client():
-    """Bedrock client, built once. Mantle -- not the legacy InvokeModel path.
+    """Bedrock client, built once. Legacy InvokeModel -- Mantle is SCP-denied.
 
-    No static keys -- boto3 resolves the SSO profile (`make aws-login`) the
-    same way services/orchestrator/llm.py does. Mirrors that module's client
-    construction exactly so both services share one AWS SSO setup.
+    NOT AnthropicBedrockMantle: the org SCP carries an EXPLICIT DENY on
+    bedrock-mantle:CreateInference (policy p-1sclicmp). IAM cannot override an
+    SCP deny and it is not region-specific, so Mantle returns 403 on every
+    call. Verified 6 Sep. services/orchestrator/llm.py has the same fix.
+
+    No static keys -- boto3 resolves the SSO profile (`make aws-login`).
     """
-    from anthropic import AnthropicBedrockMantle
+    from anthropic import AnthropicBedrock
 
-    return AnthropicBedrockMantle(
+    return AnthropicBedrock(
         aws_profile=settings.aws_profile,
         aws_region=settings.bedrock_region,
     )
@@ -248,7 +251,7 @@ class SkuResolution:
     unmet_qualifier: Optional[str]
 
 
-def resolve_skus(mentioned_terms: list[str]) -> list[SkuResolution]:
+def resolve_skus(mentioned_terms: list[str], context: str | None = None) -> list[SkuResolution]:
     """Matcher layers 1-3 only -- no network, no API key. Layer 4 (LLM
     adjudication) is opt-in via MATCHER_LLM_ADJUDICATION and off by default,
     since the service must be able to demo with it switched off entirely.
@@ -259,7 +262,7 @@ def resolve_skus(mentioned_terms: list[str]) -> list[SkuResolution]:
 
     results = []
     for term in mentioned_terms:
-        r = match_term(term, llm_adjudicate=llm_adjudicate)
+        r = match_term(term, llm_adjudicate=llm_adjudicate, context=context)
         results.append(
             SkuResolution(
                 term=term,
