@@ -96,10 +96,12 @@ ALIASES: dict[str, str] = {
     "instant noodles": "NOODLES-1KG", "noodles": "NOODLES-1KG",
     "maggi": "NOODLES-1KG", "泡面": "NOODLES-1KG", "mee": "NOODLES-1KG",
     "面条": "NOODLES-1KG", "mi": "NOODLES-1KG",
-    # infant formula / milk powder
-    "milk powder": "INFANT-FORMULA-900G", "baby formula": "INFANT-FORMULA-900G",
-    "formula": "INFANT-FORMULA-900G", "奶粉": "INFANT-FORMULA-900G",
-    "susu tepung": "INFANT-FORMULA-900G", "பால் பொடி": "INFANT-FORMULA-900G",
+    # INFANT formula only. Generic "milk powder" / "susu tepung" / "奶粉" is a
+    # CATALOGUE GAP — the charity stocks infant formula and UHT milk, neither of
+    # which is general-purpose powdered milk. Matching them to an infant product
+    # was the single biggest failure mode in the test set (5 of 16 wrong).
+    "baby formula": "INFANT-FORMULA-900G", "infant formula": "INFANT-FORMULA-900G",
+    "susu bayi": "INFANT-FORMULA-900G", "婴儿奶粉": "INFANT-FORMULA-900G",
     # fresh milk
     "milk": "MILK-UHT-1L", "牛奶": "MILK-UHT-1L", "susu": "MILK-UHT-1L",
     "soy milk": "SOY-MILK-1L", "豆奶": "SOY-MILK-1L",
@@ -135,13 +137,16 @@ ALIASES: dict[str, str] = {
     "tofu": "TOFU-300G", "豆腐": "TOFU-300G", "tauhu": "TOFU-300G",
     # breakfast
     "cereal": "CEREAL-500G", "麦片": "CEREAL-500G",
-    "oats": "OATS-1KG", "porridge": "OATS-1KG", "粥": "OATS-1KG", "கஞ்சி": "OATS-1KG",
+    # Oats only. 粥 / கஞ்சி / "porridge" mean rice congee, a prepared dish the
+    # charity does not stock — matching them to dry oats was 4 of 16 failures.
+    "oats": "OATS-1KG", "rolled oats": "OATS-1KG", "燕麦": "OATS-1KG",
     "biscuits": "BISCUITS-500G", "饼干": "BISCUITS-500G", "biskut": "BISCUITS-500G",
     # spreads
     "jam": "JAM-450G", "果酱": "JAM-450G",
     "peanut butter": "PEANUT-BUTTER-500G", "花生酱": "PEANUT-BUTTER-500G",
     # beverages
-    "coffee": "COFFEE-500G", "咖啡": "COFFEE-500G", "kopi": "COFFEE-500G", "காபி": "COFFEE-500G",
+    "coffee": "COFFEE-500G", "咖啡": "COFFEE-500G", "kopi": "COFFEE-500G",
+    "காபி": "COFFEE-500G", "kaapi": "COFFEE-500G",
     "tea": "TEA-100BAG", "茶": "TEA-100BAG", "teh": "TEA-100BAG", "தேநீர்": "TEA-100BAG",
     # NB: no bare "water" alias — it fuzzy-matches "weather" at 0.83, above the
     # 0.72 accept threshold, producing a false match on "nice weather today".
@@ -152,6 +157,8 @@ ALIASES: dict[str, str] = {
     "toothpaste": "TOOTHPASTE-100G", "牙膏": "TOOTHPASTE-100G",
     "detergent": "DETERGENT-2KG", "洗衣粉": "DETERGENT-2KG",
     "dishwashing liquid": "DISHWASH-LIQUID-1L", "洗洁精": "DISHWASH-LIQUID-1L",
+    "dish soap": "DISHWASH-LIQUID-1L", "dishwash": "DISHWASH-LIQUID-1L",
+    "sabun pinggan": "DISHWASH-LIQUID-1L",
     "sanitary pads": "SANITARY-PADS-20PK", "pads": "SANITARY-PADS-20PK",
     "masks": "MASKS-50PK", "口罩": "MASKS-50PK",
     "hand sanitiser": "HAND-SANITISER-500ML", "sanitizer": "HAND-SANITISER-500ML",
@@ -172,6 +179,13 @@ KNOWN_GAPS = {
     "pureed food": "no soft/pureed meal SKU in the catalogue",
     "adult diapers": "only infant diapers (DIAPERS-M-40PK) are stocked",
     "chapati": "no flatbread SKU in the catalogue",
+    "milk powder": "stocks INFANT-FORMULA-900G and MILK-UHT-1L, neither is "
+                   "general-purpose powdered milk",
+    "susu tepung": "generic powdered milk — see 'milk powder'",
+    "奶粉": "generic powdered milk — see 'milk powder'",
+    "粥": "rice congee is a prepared dish; not stocked",
+    "porridge": "rice congee is a prepared dish; not stocked",
+    "கஞ்சி": "rice congee is a prepared dish; not stocked",
 }
 
 

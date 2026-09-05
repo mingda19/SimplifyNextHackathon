@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Callable, Optional
 
-from app.skus import ALIASES, SKU_BY_CODE, SKU_CATALOGUE
+from app.skus import ALIASES, KNOWN_GAPS, SKU_BY_CODE, SKU_CATALOGUE
 from app.skus import (
     ADULT_SIZED,
     GLUTEN_FREE,
@@ -63,13 +63,21 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
     # "soft food for my elderly mother" and wrongly block every food match,
     # so only phrases that unambiguously mean adult-sized incontinence goods.
     ADULT_SIZED: ["adult diaper", "adult diapers", "adult nappy",
-                  "adult nappies", "bedridden", "dewasa"],
+                  "adult nappies", "bedridden", "dewasa",
+                  # An elderly relative named alongside diapers means adult
+                  # sizing. Safe to widen: ADULT_SIZED is category-scoped to
+                  # INFANT/HYGIENE/HEALTH, so it cannot block food matches.
+                  "grandmother", "grandfather", "grandma", "grandpa",
+                  "elderly father", "elderly mother", "my father", "my mother",
+                  "nenek", "datuk", "warga emas",
+                  "婆婆", "公公", "爷爷", "奶奶", "老人家"],
     GLUTEN_FREE: ["gluten free", "gluten-free", "no gluten"],
-    HALAL: ["halal"],
+    HALAL: ["halal", "清真", "halal certified", "muslim"],
     SUGAR_FREE: [
         "sugar free", "sugar-free", "no sugar", "low sugar", "diabetic",
         "无糖",  # Mandarin: sugar-free
         "tanpa gula",  # Malay: without sugar
+        "sarkarai illatha",  # Tamil (transliterated): without sugar
     ],
     LOW_SODIUM: ["low sodium", "low-sodium", "less salt", "no salt"],
     LACTOSE_FREE: ["lactose free", "lactose-free", "dairy free", "no dairy"],
@@ -192,6 +200,14 @@ def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
     return best
 
 
+def _match_known_gap(normalized_text: str) -> Optional[str]:
+    """Return the gap reason if the text names something the catalogue lacks."""
+    for term in sorted(KNOWN_GAPS, key=len, reverse=True):
+        if _alias_present(_normalize(term), normalized_text):
+            return KNOWN_GAPS[term]
+    return None
+
+
 def match_term(
     text: str,
     llm_adjudicate: Optional[Callable[[str, list[str]], Optional[tuple[str, float]]]] = None,
@@ -213,6 +229,18 @@ def match_term(
     """
     normalized = _normalize(text)
     qualifier_scope = _normalize(f"{text} {context}") if context else normalized
+
+    # LAYER 0 — known catalogue gaps, checked BEFORE anything else.
+    #
+    # Simply deleting a bad alias is not enough: with "susu tepung" removed,
+    # the fuzzy layer matched the substring "tepung" (Malay for flour) to
+    # FLOUR-1KG, and "milk powder" fell through to MILK-UHT-1L. Both are worse
+    # than no match. A term we have positively determined the catalogue cannot
+    # serve must short-circuit, not be left to a lower layer's guesswork.
+    gap = _match_known_gap(normalized)
+    if gap is not None:
+        return MatchResult(matched_sku=None, confidence=0.0, method="known_gap",
+                           unmet_qualifier=gap)
 
     candidate = _match_exact_code(text)
     method = "exact_code"

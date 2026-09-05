@@ -28,7 +28,10 @@ GOLDEN_CASES = [
     ("chicken, Malay", "ayam", "CHICKEN-FROZEN-1KG", None, None),
     ("fish, Malay", "ikan", "FISH-FROZEN-1KG", None, None),
     ("diapers, Mandarin", "尿布", "DIAPERS-M-40PK", None, None),
-    ("porridge, Mandarin", "粥", "OATS-1KG", None, None),
+    # 粥 is rice congee, a prepared dish the charity does not stock. It used to
+    # resolve to OATS-1KG; the LLM judge flagged that as a wrong match in 4 of
+    # 16 test-set failures, so it is now a documented catalogue gap.
+    ("porridge, Mandarin -> catalogue gap", "粥", None, None, None),
     ("longest-alias preference", "cooking oil", "OIL-2L", None, None),
     # --- layer 3: fuzzy / typo / voice-transcription noise ---
     ("typo", "rce please", "RICE-5KG", None, None),
@@ -99,11 +102,14 @@ GOLDEN_CASES = [
         "msg_free",
     ),
     (
-        "soft texture (paraphrase) -> refuse, not INSTANT-CEREAL",
+        # "porridge" now means rice congee (a prepared dish the charity does
+        # not stock), so this refuses at layer 0 rather than on soft_texture.
+        # Either way it is correctly refused, which is what the invariant is.
+        "soft texture porridge -> refuse as a catalogue gap",
         "soft texture porridge please",
         None,
-        "OATS-1KG",
-        "soft_texture",
+        None,
+        None,
     ),
     (
         "low sugar (paraphrase) -> refuse, not INSTANT-COFFEE",
@@ -113,18 +119,23 @@ GOLDEN_CASES = [
         "sugar_free",
     ),
     (
-        "no sugar, Mandarin -> refuse, not MILK-POWDER",
+        # Same as the Malay case: 奶粉 is generic powdered milk, a catalogue
+        # gap, so it is refused at layer 0 before the sugar-free check.
+        "no sugar + Mandarin generic milk powder -> refuse as a catalogue gap",
         "无糖奶粉",
         None,
-        "INFANT-FORMULA-900G",
-        "sugar_free",
+        None,
+        None,
     ),
     (
-        "no sugar, Malay -> refuse, not MILK-POWDER",
+        # Refused, but for a stronger reason than the sugar-free qualifier:
+        # generic powdered milk is not in the catalogue at all, so layer 0
+        # short-circuits before qualifier detection runs.
+        "no sugar + generic milk powder -> refuse as a catalogue gap",
         "tanpa gula susu tepung",
         None,
-        "INFANT-FORMULA-900G",
-        "sugar_free",
+        None,
+        None,
     ),
     # --- Tamil, native script (found in WS2 Phase 1 A3/C2: the golden set's
     # only prior Tamil case was romanized "arisi"; the alias word-boundary
