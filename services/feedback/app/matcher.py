@@ -37,6 +37,7 @@ from app.skus import (
     VEGETARIAN,
     NUT_FREE,
     SOFT_TEXTURE,
+    MSG_FREE,
 )
 
 FUZZY_ACCEPT_THRESHOLD = 0.72
@@ -49,7 +50,11 @@ LLM_ACCEPT_THRESHOLD = 0.60
 QUALIFIER_PATTERNS: dict[str, list[str]] = {
     GLUTEN_FREE: ["gluten free", "gluten-free", "no gluten"],
     HALAL: ["halal"],
-    SUGAR_FREE: ["sugar free", "sugar-free", "no sugar", "diabetic"],
+    SUGAR_FREE: [
+        "sugar free", "sugar-free", "no sugar", "low sugar", "diabetic",
+        "无糖",  # Mandarin: sugar-free
+        "tanpa gula",  # Malay: without sugar
+    ],
     LOW_SODIUM: ["low sodium", "low-sodium", "less salt", "no salt"],
     LACTOSE_FREE: ["lactose free", "lactose-free", "dairy free", "no dairy"],
     VEGETARIAN: ["vegetarian", "no meat", "veg only"],
@@ -59,6 +64,7 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
         "puree",
         "soft food",
         "softer food",
+        "soft texture",
         "cannot chew",
         "can't chew",
         "hard to chew",
@@ -67,6 +73,7 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
         "damn hard",
         "too hard",
     ],
+    MSG_FREE: ["no msg", "msg free", "msg-free", "without msg"],
 }
 
 _SKU_CODE_RE = re.compile(r"\b[A-Z]{2,}-[A-Z0-9]+\b")

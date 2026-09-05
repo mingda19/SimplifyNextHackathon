@@ -24,6 +24,7 @@ LACTOSE_FREE = "lactose_free"
 VEGETARIAN = "vegetarian"
 NUT_FREE = "nut_free"
 SOFT_TEXTURE = "soft_texture"  # pureed / soft / cannot-chew
+MSG_FREE = "msg_free"
 
 ALL_QUALIFIERS = {
     GLUTEN_FREE,
@@ -34,6 +35,7 @@ ALL_QUALIFIERS = {
     VEGETARIAN,
     NUT_FREE,
     SOFT_TEXTURE,
+    MSG_FREE,
 }
 
 
