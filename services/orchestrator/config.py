@@ -48,9 +48,11 @@ class Settings:
     # Inference region may differ from the SSO region — see `make check-bedrock`.
     bedrock_region: str = os.getenv("BEDROCK_REGION") or os.getenv(
         "AWS_REGION", "ap-southeast-1")
-    # Bedrock IDs take the `anthropic.` prefix. NOT the 2024 id in the AWS deck.
-    model_predict: str = os.getenv("MODEL_PREDICT", "anthropic.claude-haiku-4-5")
-    model_adapt: str = os.getenv("MODEL_ADAPT", "anthropic.claude-haiku-4-5")
+    # bedrock-runtime InvokeModel needs the INFERENCE PROFILE id (us. prefix).
+    # Claude Haiku 4.5 is INFERENCE_PROFILE-only in us-east-1, so the bare
+    # `anthropic.claude-haiku-4-5` id is rejected on this path.
+    model_predict: str = os.getenv("MODEL_PREDICT", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    model_adapt: str = os.getenv("MODEL_ADAPT", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
     max_tokens_predict: int = int(os.getenv("MAX_TOKENS_PREDICT", "4096"))
     max_tokens_adapt: int = int(os.getenv("MAX_TOKENS_ADAPT", "2048"))
 

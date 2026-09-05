@@ -20,6 +20,8 @@ _LOCK = threading.Lock()
 # Bedrock is partner-operated and priced separately: verify against
 # https://aws.amazon.com/bedrock/pricing/ and correct these on day 1.
 PRICES: dict[str, tuple[float, float]] = {
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": (1.00, 5.00),
+    "us.anthropic.claude-sonnet-5": (2.00, 10.00),
     "anthropic.claude-haiku-4-5": (1.00, 5.00),
     "anthropic.claude-sonnet-5": (2.00, 10.00),
     "anthropic.claude-opus-5": (5.00, 25.00),
@@ -96,10 +98,10 @@ def reset() -> None:
 def summary() -> str:
     led = load()
     cap = settings.max_session_spend_usd
-    if led["cache_read"] == 0 and led["calls"] > 1:
-        note = "  (cache_read=0 across calls — check for a silent invalidator)"
-    else:
-        note = ""
+    # Our system prompts are ~500 tokens, far below Bedrock's ~4k minimum
+    # cacheable prefix, so cache_read=0 is EXPECTED here and is not a bug.
+    # Measured on this account: a 3,009-token prefix does not cache; 8,102 does.
+    note = ""
     return (
         f"spend ${led['usd']:.4f} / ${cap:.2f} cap  ·  {led['calls']} calls  ·  "
         f"in {led['input']:,} out {led['output']:,} cache_read {led['cache_read']:,}{note}"
