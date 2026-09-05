@@ -6,15 +6,15 @@ Read-only audit. No source files were modified while producing this report.
 
 | Check | Verdict | One-line issue |
 |---|---|---|
-| A1 | WEAK | 25 golden cases (not 27 as PROGRESS.md claims), 7/25 (28%) expect `None` — just under the 1/3 bar |
+| A1 | ~~WEAK~~ **FIXED** (`ab1cfb0`, `b9dc4e8`) | Was 25 cases / 7 None (28%). Now 40 cases / 19 None (47.5%) — resolved as a side effect of the B1/B2 regression cases, no separate fix needed |
 | A2 | PASS | 4 qualifier hard-negatives present (gluten-free, halal, low-sodium, pureed) + 1 Singlish texture case |
-| A3 | WEAK | Mandarin/Malay get 4 cases each, but Tamil gets exactly 1 — thin, not "bolted on" but clearly the weakest leg |
+| A3 | ~~WEAK~~ **FIXED** (`58d25ba`) | Was 1 Tamil case (romanized only). Now 4 Tamil cases, 3 in native script, exercising the alias-matching bug fix |
 | A4 | PASS | No test asserts only "didn't crash" — every case checks exact `matched_sku`/`near_sku`/`unmet_qualifier` |
-| B1 | WEAK | `FUZZY_ACCEPT_THRESHOLD = 0.72`, no comment justifying the number, no experiment on record |
-| B2 | FAIL | Qualifier guard is a fixed English-only phrase list; all 5 probe phrases ("no MSG", "soft texture", "low sugar", "无糖", "tanpa gula") slip through undetected |
+| B1 | ~~WEAK~~ **FIXED** (`ab1cfb0`) | Experiment run (see detail below): threshold value itself wasn't the real problem — no single ratio cutoff separates real typos from unrelated same-length words. Fixed with a first-character gate instead; threshold left at 0.72 |
+| B2 | ~~FAIL~~ **FIXED** (`b9dc4e8`) | Was a fixed English-only phrase list; all 5 probe phrases slipped through. Added `MSG_FREE` qualifier tag + paraphrase/Mandarin/Malay patterns; regression cases now pass |
 | B3 | PASS | Every resolution records `method` and is persisted to `sku_matches.method` |
-| C1 | — | See table below: 20 SKUs, 18 zh aliases, 14 ms aliases, **1** ta alias |
-| C2 | FAIL | 19/20 SKUs have zero Tamil aliases; Tamil fuzzy fallback doesn't work either (see detail) |
+| C1 | — | See table below: 20 SKUs, 18 zh aliases, 14 ms aliases, now **12** ta aliases (was 1) |
+| C2 | ~~FAIL~~ **FIXED** (`58d25ba`) | Was 19/20 SKUs with zero Tamil aliases, plus a silent `\b`-regex bug that would have broken any Tamil-script alias added anyway. Both fixed; fuzzy/typo tolerance for Tamil remains unsupported (disclosed, not fixed) |
 | D1 | PASS | Retry sends the validation error back into the conversation (`previous_error` param, `_extract_once`) |
 | D2 | PASS | Urgency rubric is concretely anchored per level 1-5, not "rate 1-5" |
 | D3 | PASS | `FAKE_EXTRACTION.mentioned_terms = ["rice", "gluten free bread"]` — natural language, exercises the real matcher including the qualifier guard |
@@ -30,9 +30,16 @@ Read-only audit. No source files were modified while producing this report.
 | H2 | PASS | `statusEl.textContent = t("submitting")` + `submitBtn.disabled = true` while the POST is in flight |
 | H3 | PASS | No `SpeechRecognitionCtor` → mic button disabled, hint text swapped, typing still works |
 
-## Overall verdict: **AMBER**
+## Overall verdict: **AMBER** as of Phase 0 (this audit). Superseded by Phase 1 fixes below.
 
-No RED trigger fired (no module-level DB connection reuse, no f-string SQL injection, `FAKE_LLM` fixture does exercise the real matcher). But it lands squarely on the AMBER definition: **the qualifier guard is a short fixed list (B2 FAIL) and the alias table is heavily English/Mandarin/Malay-weighted with Tamil essentially unsupported (C2 FAIL)**.
+No RED trigger fired (no module-level DB connection reuse, no f-string SQL injection, `FAKE_LLM` fixture does exercise the real matcher). But it landed squarely on the AMBER definition: **the qualifier guard was a short fixed list (B2 FAIL) and the alias table was heavily English/Mandarin/Malay-weighted with Tamil essentially unsupported (C2 FAIL)**.
+
+### Phase 1 update
+
+B1, B2, A1, A3, and C2 are now fixed (commits `ab1cfb0`, `b9dc4e8`, `58d25ba` — see per-check notes above and each commit message for the red-then-green evidence). Two issues were found *while* fixing these and are logged here rather than fixed, per the Evidence Rule (real evidence, but out of scope for the fix that surfaced them):
+
+- **Alias longest-match tiebreak picks dict order, not context.** When a sentence contains two different items' aliases at equal length (e.g. Mandarin "糖" for sugar and another 1-char alias, or Malay "gula" tying with a same-length alias), `_match_alias`'s "prefer longest" rule breaks ties by whichever appears first in `ALIASES`' definition order, not by which one is the actual subject of the sentence. Found while designing B2's Mandarin/Malay test cases (a naive test picked the wrong item); worked around by choosing test items whose alias is unambiguously longer, not by fixing the underlying tiebreak. Needs its own audit/fix cycle — it's an architecture question (how to disambiguate multi-item utterances), not a one-line change.
+- **Fuzzy layer (layer 3) still doesn't work for Tamil script.** `_match_fuzzy` tokenizes with `re.findall(r"[a-z]+", ...)`, which never matches Tamil Unicode. C2's fix closes the alias (layer 2) gap but typo/voice-noise tolerance for Tamil remains unsupported. Would need script-aware edit distance; not attempted here.
 
 ---
 
