@@ -41,6 +41,20 @@ B1, B2, A1, A3, and C2 are now fixed (commits `ab1cfb0`, `b9dc4e8`, `58d25ba` �
 - **Alias longest-match tiebreak picks dict order, not context.** When a sentence contains two different items' aliases at equal length (e.g. Mandarin "糖" for sugar and another 1-char alias, or Malay "gula" tying with a same-length alias), `_match_alias`'s "prefer longest" rule breaks ties by whichever appears first in `ALIASES`' definition order, not by which one is the actual subject of the sentence. Found while designing B2's Mandarin/Malay test cases (a naive test picked the wrong item); worked around by choosing test items whose alias is unambiguously longer, not by fixing the underlying tiebreak. Needs its own audit/fix cycle — it's an architecture question (how to disambiguate multi-item utterances), not a one-line change.
 - **Fuzzy layer (layer 3) still doesn't work for Tamil script.** `_match_fuzzy` tokenizes with `re.findall(r"[a-z]+", ...)`, which never matches Tamil Unicode. C2's fix closes the alias (layer 2) gap but typo/voice-noise tolerance for Tamil remains unsupported. Would need script-aware edit distance; not attempted here.
 
+### Phase 2 update
+
+Stood up a real Postgres instance for the first time this project has had one available (`compose.yaml` + `services/feedback/schema.sql` applied) and found a **critical bug that nothing before this could have caught**: `psycopg2` can't adapt a raw Python list-of-dicts to the `unmet_needs` JSONB column, so every extraction — however successful — crashed on the final `UPDATE` and was silently recorded as `extraction_status='failed'`. Fixed by wrapping the value in `psycopg2.extras.Json(...)` (`app/main.py`). This means every real submission this service had ever processed, up to this point, would have shown as failed regardless of extraction quality — the unit tests never exercised this path at all (`tests/test_matcher.py` only imports `app.matcher`, never touches the DB).
+
+With that fixed, confirmed empirically against the live container (`scripts/smoke_real.py`, `scripts/adversarial.py`, 7/7 adversarial cases pass):
+- F1 (per-request pooled connections) holds under real concurrent load, not just by code reading
+- E3 (parameterized queries) resists an actual SQL-injection-shaped payload
+- No 5xx on empty/huge/emoji-only input; rapid duplicate submissions create independent rows
+- `Extraction`'s Pydantic schema genuinely rejects an out-of-vocabulary enum at construction time
+
+**p50/p95 latency (FAKE_LLM=1, DB+API round-trip only, 5-entry sample):** p50 ≈ 219ms, p95 ≈ 312ms. This is *not* real extraction latency — under `FAKE_LLM=1` every entry short-circuits to a canned response, so this only measures the DB/API path. Real Bedrock-call latency is still pending: AWS CLI was not installed on the dev machine and had to be installed mid-session, and the AWS SSO login (`aws sso login --sso-session hackathon`) has not yet been completed. `scripts/check_bedrock.py` (Part A) and the real-Bedrock half of `smoke_real.py`/`adversarial.py` (Part C's bad-enum-retry case) remain unverified until that login happens.
+
+Also fixed along the way (found while writing `smoke_real.py`, a client-side issue not a service bug): Windows resolves `localhost` to IPv6 first, and the connection attempt times out before falling back to IPv4 — costs ~2 seconds per request on this machine. Both scripts default to `127.0.0.1` instead. Worth knowing if anyone else demos from a Windows laptop and sees mysteriously slow requests against `localhost` URLs.
+
 ---
 
 ## Detail
