@@ -133,6 +133,19 @@ def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
         if re.search(r"[一-鿿]", alias):
             continue  # fuzzy matching on CJK aliases isn't meaningful here
         for ngram in ngrams:
+            # Require the first character to match before scoring. Plain
+            # SequenceMatcher.ratio() alone false-matches unrelated real
+            # words that happen to sit at short edit-distance from a short
+            # alias (e.g. "nice"/"race" -> "rice", "wish"/"dish" -> "fish",
+            # "toffee" -> "coffee") at ratios *higher* than genuine typos
+            # like "rce" -> "rice" -- there is no single ratio threshold
+            # that admits the latter without also admitting the former.
+            # This gate is a cheap, evidenced discriminator for that failure
+            # mode (see AUDIT.md B1); it does not eliminate every case
+            # (documented residual: "race"/"bead"/"beams" still slip past
+            # since they share a first letter with the target alias).
+            if not ngram or not alias or ngram[0] != alias[0]:
+                continue
             ratio = SequenceMatcher(None, ngram, alias).ratio()
             if ratio >= FUZZY_ACCEPT_THRESHOLD and (best is None or ratio > best[1]):
                 best = (sku, ratio)
