@@ -85,6 +85,43 @@ GOLDEN_CASES = [
     ("unrelated word near 'noodles'", "toy poodles are cute", None, None, None),
     ("unrelated word near 'coffee'", "a piece of toffee", None, None, None),
     ("unrelated word near 'diapers'", "car windscreen wipers", None, None, None),
+    # --- qualifier guard: paraphrases/languages the fixed phrase list missed
+    # (found in WS2 Phase 1 B2 probe, see AUDIT.md) ---
+    (
+        "no MSG -> refuse, not CHICKEN-FROZEN",
+        "no msg chicken please",
+        None,
+        "CHICKEN-FROZEN",
+        "msg_free",
+    ),
+    (
+        "soft texture (paraphrase) -> refuse, not INSTANT-CEREAL",
+        "soft texture porridge please",
+        None,
+        "INSTANT-CEREAL",
+        "soft_texture",
+    ),
+    (
+        "low sugar (paraphrase) -> refuse, not INSTANT-COFFEE",
+        "low sugar coffee please",
+        None,
+        "INSTANT-COFFEE",
+        "sugar_free",
+    ),
+    (
+        "no sugar, Mandarin -> refuse, not MILK-POWDER",
+        "无糖奶粉",
+        None,
+        "MILK-POWDER",
+        "sugar_free",
+    ),
+    (
+        "no sugar, Malay -> refuse, not MILK-POWDER",
+        "tanpa gula susu tepung",
+        None,
+        "MILK-POWDER",
+        "sugar_free",
+    ),
 ]
 
 
