@@ -84,10 +84,12 @@ ALIASES: dict[str, str] = {
     "大米": "RICE-5KG",
     "beras": "RICE-5KG",
     "arisi": "RICE-5KG",
+    "அரிசி": "RICE-5KG",  # Tamil, native script
     # bread
     "bread": "BREAD-LOAF",
     "面包": "BREAD-LOAF",
     "roti": "BREAD-LOAF",
+    "ரொட்டி": "BREAD-LOAF",  # Tamil, native script
     # cooking oil
     "cooking oil": "COOKING-OIL-1L",
     "oil": "COOKING-OIL-1L",
@@ -106,6 +108,7 @@ ALIASES: dict[str, str] = {
     "formula": "MILK-POWDER",
     "奶粉": "MILK-POWDER",
     "susu tepung": "MILK-POWDER",
+    "பால் பொடி": "MILK-POWDER",  # Tamil, native script
     # sardines
     "sardine": "CANNED-SARDINE",
     "sardines": "CANNED-SARDINE",
@@ -117,26 +120,31 @@ ALIASES: dict[str, str] = {
     "sugar": "SUGAR-1KG",
     "糖": "SUGAR-1KG",
     "gula": "SUGAR-1KG",
+    "சர்க்கரை": "SUGAR-1KG",  # Tamil, native script
     # vegetables
     "vegetables": "VEG-LEAFY",
     "vegetable": "VEG-LEAFY",
     "青菜": "VEG-LEAFY",
     "菜": "VEG-LEAFY",
     "sayur": "VEG-LEAFY",
+    "காய்கறி": "VEG-LEAFY",  # Tamil, native script
     "frozen vegetables": "VEG-FROZEN-MIX",
     # eggs
     "eggs": "EGGS-DOZEN",
     "egg": "EGGS-DOZEN",
     "鸡蛋": "EGGS-DOZEN",
     "telur": "EGGS-DOZEN",
+    "முட்டை": "EGGS-DOZEN",  # Tamil, native script
     # coffee
     "coffee": "INSTANT-COFFEE",
     "咖啡": "INSTANT-COFFEE",
     "kopi": "INSTANT-COFFEE",
+    "காபி": "INSTANT-COFFEE",  # Tamil, native script
     # tea
     "tea": "TEA-BAGS",
     "茶": "TEA-BAGS",
     "teh": "TEA-BAGS",
+    "தேநீர்": "TEA-BAGS",  # Tamil, native script
     # tofu
     "tofu": "TOFU",
     "豆腐": "TOFU",
@@ -145,10 +153,12 @@ ALIASES: dict[str, str] = {
     "chicken": "CHICKEN-FROZEN",
     "鸡肉": "CHICKEN-FROZEN",
     "ayam": "CHICKEN-FROZEN",
+    "கோழி": "CHICKEN-FROZEN",  # Tamil, native script
     # fish
     "fish": "FISH-FROZEN",
     "鱼": "FISH-FROZEN",
     "ikan": "FISH-FROZEN",
+    "மீன்": "FISH-FROZEN",  # Tamil, native script
     # soft food
     "soft food": "SOFT-FOOD-PACK",
     "pureed food": "SOFT-FOOD-PACK",
@@ -162,4 +172,5 @@ ALIASES: dict[str, str] = {
     "cereal": "INSTANT-CEREAL",
     "porridge": "INSTANT-CEREAL",
     "粥": "INSTANT-CEREAL",
+    "கஞ்சி": "INSTANT-CEREAL",  # Tamil, native script
 }
