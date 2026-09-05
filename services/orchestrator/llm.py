@@ -50,13 +50,18 @@ Rules:
 
 @lru_cache(maxsize=1)
 def _client():
-    """Bedrock client, built once. Mantle — not the legacy InvokeModel path."""
-    from anthropic import AnthropicBedrockMantle
+    """Bedrock client, built once. Legacy InvokeModel — Mantle is SCP-denied."""
+    from anthropic import AnthropicBedrock
 
-    # No static keys. boto3 resolves the SSO profile and refreshes the session
-    # token itself, so a 12-hour expiry is transparent for as long as the SSO
-    # login is alive. `make aws-login` renews it.
-    return AnthropicBedrockMantle(
+    # NOT AnthropicBedrockMantle. The org SCP carries an EXPLICIT DENY on
+    # bedrock-mantle:CreateInference (policy p-1sclicmp), which IAM cannot
+    # override and which is not region-specific. The legacy client goes to
+    # bedrock-runtime InvokeModel instead — an action the SCP permits.
+    #
+    # No static keys: boto3 resolves the SSO profile and refreshes the session
+    # token itself, so the 12-hour expiry is transparent while the SSO login
+    # is alive. `make aws-login` renews it.
+    return AnthropicBedrock(
         aws_profile=settings.aws_profile,
         aws_region=settings.bedrock_region,
     )

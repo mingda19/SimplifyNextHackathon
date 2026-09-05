@@ -77,22 +77,34 @@ Going with **Claude Haiku 4.5** as M proposed. Correct call: it's the cheapest c
 our 6 nodes don't touch a model at all, so the ceiling is low regardless.
 
 ```python
-from anthropic import AnthropicBedrockMantle
+from anthropic import AnthropicBedrock          # NOT Mantle — see below
 
-client = AnthropicBedrockMantle(aws_region="us-east-1")
+client = AnthropicBedrock(aws_profile="hackathon", aws_region="us-east-1")
 
-MODEL_PREDICT = os.getenv("MODEL_PREDICT", "anthropic.claude-haiku-4-5")
-MODEL_ADAPT   = os.getenv("MODEL_ADAPT",   "anthropic.claude-haiku-4-5")
+MODEL_PREDICT = os.getenv("MODEL_PREDICT", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+MODEL_ADAPT   = os.getenv("MODEL_ADAPT",   "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 ```
+
+> **VERIFIED 6 Sep — Mantle is blocked on this account.** `AnthropicBedrockMantle`
+> returns `403 permission_error`: an **explicit deny in the org Service Control
+> Policy** on `bedrock-mantle:CreateInference`
+> (`arn:aws:organizations::496747445669:policy/o-z1ighb6yyh/service_control_policy/p-1sclicmp`).
+> An SCP explicit deny cannot be overridden by IAM and is not region-specific, so
+> there is no way around it from inside the sandbox. Use the legacy
+> `AnthropicBedrock` client, which posts to `bedrock-runtime` `InvokeModel` — an
+> action the SCP permits. Confirmed working end to end at `$0.0095` for a
+> 3-call run.
 
 **Three traps, all of which will cost us an afternoon if we hit them cold:**
 
-1. **Ignore the model ID in the AWS deck.** It shows `anthropic.claude-3-haiku-20240307-v1:0`, a
-   2024-era model. Current Haiku on Bedrock is `anthropic.claude-haiku-4-5` — Bedrock IDs take the
-   `anthropic.` prefix; the first-party ID is the bare `claude-haiku-4-5`. Never append date suffixes.
-2. **Use `AnthropicBedrockMantle`, not `AnthropicBedrock`.** The latter is the legacy
-   `bedrock-runtime` InvokeModel path. The legacy integration also rejects top-level `cache_control`
-   with a 400 — another reason to stay on Mantle.
+1. **Use the INFERENCE PROFILE id, not the bare model id.** Claude Haiku 4.5 is registered
+   `INFERENCE_PROFILE`-only in us-east-1, so `anthropic.claude-haiku-4-5` and
+   `anthropic.claude-haiku-4-5-20251001-v1:0` are both rejected on the InvokeModel path. The working
+   id is **`us.anthropic.claude-haiku-4-5-20251001-v1:0`** (the `us.` prefix). `global.anthropic.claude-haiku-4-5-20251001-v1:0` also exists.
+   Ignore the deck's `anthropic.claude-3-haiku-20240307-v1:0` — that is a 2024 model.
+2. **Use `AnthropicBedrock`, NOT `AnthropicBedrockMantle`.** Mantle is SCP-denied on this account
+   (see the box above). With the legacy client, block-level `cache_control` inside the `system`
+   array is accepted — it is only *top-level* `cache_control` that the legacy path rejects.
 3. **Haiku 4.5 is a pre-4.6 model, so the modern knobs are absent.** `output_config: {effort: ...}`
    **errors** on it. Extended thinking, if we ever want it, is the old
    `thinking={"type": "enabled", "budget_tokens": N}` form (N ≥ 1024, < `max_tokens`) — *not*
@@ -296,17 +308,23 @@ ledger["cache_read"] += getattr(u, "cache_read_input_tokens", 0)
 Because reported AWS spend lags by hours, this local ledger is our *only* real-time view. It also
 demos beautifully — an agent that watches its own budget, in a project about budget guardrails.
 
-**7.3 Prompt caching — with honest expectations.** Our system prompt and tool definitions are stable
-across every call, so mark an explicit breakpoint on the system block (shown in §4.2). Cache reads
-run ~0.1× cost.
+**7.3 Prompt caching — measured, and it does NOT apply to us.**
 
-Two caveats, so nobody is surprised:
-- **Default TTL is 5 minutes.** Sporadic dev runs will mostly *miss*. This is a demo-day and
-  tight-loop optimization, not a dev-cost saver.
-- **Minimum cacheable prefix is model-dependent (512–4096 tokens)** and short prefixes silently fail
-  to cache. Verify with `usage.cache_read_input_tokens` — if it's zero across repeated identical
-  runs, something is invalidating it. Usual culprits: a timestamp or UUID in the system prompt, or
-  unsorted `json.dumps()`. Hence `sort_keys=True` in §4.1.
+Caching works on this account, but only above a minimum prefix. Measured 6 Sep on
+`us.anthropic.claude-haiku-4-5-...`:
+
+| system prefix | cache_write | cache_read (2nd call) |
+|---|---|---|
+| 369 tokens | 0 | 0 |
+| 3,009 tokens | 0 | 0 |
+| 8,102 tokens | 8,102 | **8,102** |
+
+So the minimum cacheable prefix sits between 3k and 8k tokens (documented as
+model-dependent, 512–4096). **Our system prompts are ~500 tokens, so caching will never
+engage** and `cache_read=0` is expected, not a bug. Do not chase it, and do not pad the
+prompt to reach the threshold — the padding would cost more than the cache saves.
+
+Keep `sort_keys=True` in §4.1 anyway: it costs nothing and keeps the payload deterministic.
 
 **7.4 Never leave a loop running unattended.** See the retry cap in §4.4.
 
