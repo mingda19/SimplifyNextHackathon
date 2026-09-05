@@ -1,0 +1,458 @@
+[
+  {
+    "beneficiary_id": "BEN-00097",
+    "text": "",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00136",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00165",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00172",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00190",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00223",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00247",
+    "text": "",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00286",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00309",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00395",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00411",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00415",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00448",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00577",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00625",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00635",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00694",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00696",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00737",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00762",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00766",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00814",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00827",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00848",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00857",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00874",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-00880",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00881",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00894",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-00961",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01027",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01031",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01045",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01052",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01103",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01108",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01122",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01130",
+    "text": "",
+    "lang": "en",
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01137",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01142",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01227",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01244",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01283",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01292",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01293",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01386",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01426",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01428",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01438",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01441",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01490",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01492",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01494",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01557",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01559",
+    "text": "",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01612",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01634",
+    "text": "",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01658",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01666",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01671",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01683",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01715",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01726",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01727",
+    "text": "",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01752",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01753",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01794",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01848",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01852",
+    "text": "",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01875",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01876",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01882",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01928",
+    "text": "   ",
+    "lang": null,
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01939",
+    "text": "",
+    "lang": "en",
+    "channel": "voice"
+  },
+  {
+    "beneficiary_id": "BEN-01969",
+    "text": "   ",
+    "lang": null,
+    "channel": "web"
+  },
+  {
+    "beneficiary_id": "BEN-01971",
+    "text": "",
+    "lang": "en",
+    "channel": "web"
+  }
+]

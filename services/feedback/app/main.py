@@ -1,8 +1,7 @@
 """Feedback service. Owns POST /feedback, GET /feedback, and /metrics.
 
-GET /feedback/unmet-needs is M's aggregation endpoint (see README, Workstream
-2 actionables) -- not implemented here so a merge doesn't clobber it. If it
-already exists elsewhere in this app, mount it alongside without touching it.
+GET /feedback/unmet-needs is the aggregation the orchestrator's SENSE phase
+consumes; the logic lives in app/unmet_needs.py.
 
 POST /feedback writes the raw row and returns immediately (202); extraction
 runs in a Starlette BackgroundTask. An elderly beneficiary must never wait on
@@ -24,6 +23,7 @@ from pydantic import BaseModel
 from app import db
 from app.config import settings
 from app.extract import resolve_skus, run_extraction, run_sentiment_classifier
+from app.unmet_needs import aggregate as aggregate_unmet_needs
 
 logger = logging.getLogger("feedback.main")
 logging.basicConfig(level=logging.INFO)
@@ -76,7 +76,7 @@ def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:
     try:
         extraction, schema_valid_first_try = run_extraction(text, lang)
         classifier = run_sentiment_classifier(text, extraction.sentiment)
-        sku_resolutions = resolve_skus(extraction.mentioned_terms)
+        sku_resolutions = resolve_skus(extraction.mentioned_terms, context=text)
         resolved_skus = sorted({r.matched_sku for r in sku_resolutions if r.matched_sku})
 
         logger.info(
@@ -93,7 +93,10 @@ def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:
                 """
                 UPDATE feedback.feedback_entries
                 SET extraction_status = 'done',
-                    extracted_at = %s,
+                    -- now(), not a Python naive utcnow(): received_at is
+                    -- TIMESTAMPTZ, so a naive UTC value made every latency
+                    -- metric negative by the local UTC offset (-7.9h in SGT).
+                    extracted_at = now(),
                     sentiment = %s,
                     urgency = %s,
                     categories = %s,
@@ -109,7 +112,6 @@ def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:
                 WHERE id = %s
                 """,
                 (
-                    datetime.utcnow(),
                     extraction.sentiment,
                     extraction.urgency,
                     extraction.categories,
@@ -189,6 +191,28 @@ def get_feedback(
             params,
         )
         return cur.fetchall()
+
+
+@app.get("/feedback/unmet-needs")
+def get_unmet_needs(since: Optional[datetime] = None, min_confidence: float = 0.0):
+    """Ranked unmet needs for the agent. `gap: true` = no stocked SKU covers it."""
+    return aggregate_unmet_needs(since=since, min_confidence=min_confidence)
+
+
+@app.get("/health")
+def health():
+    """Liveness + which catalogue source the matcher resolved against."""
+    from app.catalogue import source
+    from app.skus import SKU_BY_CODE
+    try:
+        with db.get_cursor() as cur:
+            cur.execute("SELECT count(*) AS n FROM feedback.feedback_entries")
+            n = cur.fetchone()["n"]
+        return {"status": "ok", "database": "ok", "entries": n,
+                "catalogue_source": source(), "catalogue_skus": len(SKU_BY_CODE),
+                "fake_llm": settings.fake_llm, "model": settings.model_extract}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "degraded", "detail": str(exc)}
 
 
 @app.get("/metrics")

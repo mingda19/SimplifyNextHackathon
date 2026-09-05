@@ -28,3 +28,5 @@ dist/
 .mypy_cache/
 .ruff_cache/
 
+node_modules/
+services/feedback/seed/
