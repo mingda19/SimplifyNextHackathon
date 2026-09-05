@@ -29,6 +29,7 @@ from typing import Callable, Optional
 
 from app.skus import ALIASES, SKU_BY_CODE, SKU_CATALOGUE
 from app.skus import (
+    ADULT_SIZED,
     GLUTEN_FREE,
     HALAL,
     SUGAR_FREE,
@@ -47,7 +48,22 @@ LLM_ACCEPT_THRESHOLD = 0.60
 # and phrased for real beneficiary language (including Singlish), not just the
 # clinical term -- "no more teeth" and "damn hard" should trip SOFT_TEXTURE just
 # as much as "pureed" does.
+# Some qualifiers only make sense for certain kinds of goods. "Adult-sized"
+# is meaningless for rice — without this scope, one adult-diaper mention would
+# block every unrelated match in the same message, since qualifiers are
+# detected across the whole sentence. An unlisted qualifier applies to all
+# categories, which is right for dietary ones: "halal" constrains any food.
+QUALIFIER_CATEGORY_SCOPE: dict[str, frozenset[str]] = {
+    "adult_sized": frozenset({"INFANT", "HYGIENE", "HEALTH"}),
+}
+
+
 QUALIFIER_PATTERNS: dict[str, list[str]] = {
+    # Narrow on purpose. A broad pattern like "elderly" would trip on
+    # "soft food for my elderly mother" and wrongly block every food match,
+    # so only phrases that unambiguously mean adult-sized incontinence goods.
+    ADULT_SIZED: ["adult diaper", "adult diapers", "adult nappy",
+                  "adult nappies", "bedridden", "dewasa"],
     GLUTEN_FREE: ["gluten free", "gluten-free", "no gluten"],
     HALAL: ["halal"],
     SUGAR_FREE: [
@@ -179,6 +195,7 @@ def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
 def match_term(
     text: str,
     llm_adjudicate: Optional[Callable[[str, list[str]], Optional[tuple[str, float]]]] = None,
+    context: Optional[str] = None,
 ) -> MatchResult:
     """Resolve one mentioned term (or short feedback snippet) to a SKU.
 
@@ -186,8 +203,16 @@ def match_term(
     it must return `(sku_code, confidence)` or `None`. Leave it unset (the
     default) to run fully offline -- this is required, not optional, since
     the service must demo with layer 4 switched off.
+
+    `context` is the full feedback message the term came from. Matching still
+    happens on the term alone, but QUALIFIERS are detected across term +
+    context: the extractor emits a bare term like "diapers" while the
+    disqualifying detail ("for my elderly father, he is bedridden") lives in
+    the surrounding sentence. Without the context the guard never sees it and
+    an adult request silently matches the infant SKU.
     """
     normalized = _normalize(text)
+    qualifier_scope = _normalize(f"{text} {context}") if context else normalized
 
     candidate = _match_exact_code(text)
     method = "exact_code"
@@ -209,7 +234,10 @@ def match_term(
     sku_code, confidence = candidate
     sku_item = SKU_BY_CODE[sku_code]
 
-    for qualifier in _detect_qualifiers(normalized):
+    for qualifier in _detect_qualifiers(qualifier_scope):
+        scope = QUALIFIER_CATEGORY_SCOPE.get(qualifier)
+        if scope is not None and (sku_item.category or "").upper() not in scope:
+            continue  # qualifier is irrelevant to this kind of good
         if qualifier not in sku_item.qualifiers:
             return MatchResult(
                 matched_sku=None,

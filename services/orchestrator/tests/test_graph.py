@@ -112,12 +112,12 @@ def test_the_demo_beat_moq_then_vendor_switch(graph):
     adaptations = summary["adaptations"]
     assert len(adaptations) == 1
     assert adaptations[0]["error_code"] == "MOQ_NOT_MET"
-    assert "VEND-B" in adaptations[0]["what_changed"]
+    assert "VENDOR-COMMUNITY" in adaptations[0]["what_changed"]
 
     order = next(s for s in summary["queued"]["steps"]
                  if s["action"] == "place_order")
     assert order["qty"] == 250, "should have been raised to the MOQ"
-    assert order["vendor_id"] == "VEND-B", "should have switched to the cheaper vendor"
+    assert order["vendor_id"] == "VENDOR-COMMUNITY", "should have switched to the cheaper vendor"
 
 
 def test_unmatched_need_is_flagged_for_human(graph):
