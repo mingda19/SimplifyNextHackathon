@@ -29,3 +29,4 @@ dist/
 .ruff_cache/
 
 node_modules/
+services/feedback/seed/
