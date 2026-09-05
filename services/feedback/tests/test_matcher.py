@@ -75,6 +75,16 @@ GOLDEN_CASES = [
     # --- no SKU exists at all ---
     ("no matching SKU #1", "fresh durian please", None, None, None),
     ("no matching SKU #2", "can you get birthday cake", None, None, None),
+    # --- fuzzy false positives: unrelated real words that happen to sit at
+    # short edit-distance from a grocery alias (found in WS2 Phase 1 B1
+    # threshold experiment, see AUDIT.md) -- these must never match ---
+    ("unrelated word near 'rice'", "nice weather today", None, None, None),
+    ("unrelated word near 'fish'", "I wish you well", None, None, None),
+    ("unrelated word near 'fish'", "wash the dish please", None, None, None),
+    ("unrelated word near 'eggs'", "carry the legs", None, None, None),
+    ("unrelated word near 'noodles'", "toy poodles are cute", None, None, None),
+    ("unrelated word near 'coffee'", "a piece of toffee", None, None, None),
+    ("unrelated word near 'diapers'", "car windscreen wipers", None, None, None),
 ]
 
 
