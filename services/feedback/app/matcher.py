@@ -92,10 +92,20 @@ def _normalize(text: str) -> str:
     return text.strip().lower()
 
 
+def _phrase_present(phrase: str, normalized_text: str) -> bool:
+    if _NON_ASCII_RE.search(phrase):
+        return phrase in normalized_text
+    # Word-boundary match, not plain substring -- "no msg" must not fire on
+    # "no msgs" (text messages), same failure mode as the alias table (see
+    # _alias_present) but here it's a Latin-script false-positive rather
+    # than a non-Latin-script false-negative.
+    return re.search(rf"\b{re.escape(phrase)}\b", normalized_text) is not None
+
+
 def _detect_qualifiers(normalized_text: str) -> list[str]:
     found = []
     for tag, phrases in QUALIFIER_PATTERNS.items():
-        if any(phrase in normalized_text for phrase in phrases):
+        if any(_phrase_present(phrase, normalized_text) for phrase in phrases):
             found.append(tag)
     return found
 

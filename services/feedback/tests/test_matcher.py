@@ -135,6 +135,15 @@ GOLDEN_CASES = [
         None,
         None,
     ),
+    # --- qualifier guard false-trigger: substring collision, not a real
+    # qualifier mention (found in WS2 Phase 1 Loop B, see AUDIT.md) ---
+    (
+        "'no msg' substring inside 'no msgs' (text messages) must not block",
+        "sorry no msgs came through, can I get some chicken",
+        "CHICKEN-FROZEN",
+        None,
+        None,
+    ),
 ]
 
 
