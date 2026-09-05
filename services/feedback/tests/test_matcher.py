@@ -122,6 +122,19 @@ GOLDEN_CASES = [
         "MILK-POWDER",
         "sugar_free",
     ),
+    # --- Tamil, native script (found in WS2 Phase 1 A3/C2: the golden set's
+    # only prior Tamil case was romanized "arisi"; the alias word-boundary
+    # regex silently fails to match native Tamil Unicode script at all --
+    # see AUDIT.md C2) ---
+    ("Tamil, native script, rice", "அரிசி", "RICE-5KG", None, None),
+    ("Tamil, native script, coffee", "காபி", "INSTANT-COFFEE", None, None),
+    (
+        "Tamil, native script, in a sentence",
+        "எனக்கு அரிசி வேணும்",
+        "RICE-5KG",
+        None,
+        None,
+    ),
 ]
 
 

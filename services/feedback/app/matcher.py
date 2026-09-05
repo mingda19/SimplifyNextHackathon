@@ -121,9 +121,16 @@ def _match_alias(normalized_text: str) -> Optional[tuple[str, float]]:
     return sku, 0.93
 
 
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7f]")
+
+
 def _alias_present(alias: str, normalized_text: str) -> bool:
-    if re.search(r"[一-鿿]", alias):
-        # CJK aliases: no word boundaries, plain substring match.
+    if _NON_ASCII_RE.search(alias):
+        # Non-Latin-script aliases: \b (word boundary) silently fails to
+        # match at all on these scripts -- confirmed empirically for Tamil
+        # (combining vowel signs/virama aren't treated as word characters by
+        # Python's Unicode-aware \b), and CJK has no whitespace word
+        # boundaries to begin with. Plain substring match for any of them.
         return alias in normalized_text
     return re.search(rf"\b{re.escape(alias)}\b", normalized_text) is not None
 
@@ -137,8 +144,8 @@ def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
 
     best: Optional[tuple[str, float]] = None
     for alias, sku in ALIASES.items():
-        if re.search(r"[一-鿿]", alias):
-            continue  # fuzzy matching on CJK aliases isn't meaningful here
+        if _NON_ASCII_RE.search(alias):
+            continue  # fuzzy matching on non-Latin-script aliases isn't meaningful here
         for ngram in ngrams:
             # Require the first character to match before scoring. Plain
             # SequenceMatcher.ratio() alone false-matches unrelated real
