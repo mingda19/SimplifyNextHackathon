@@ -18,6 +18,7 @@ from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from psycopg2.extras import Json
 from pydantic import BaseModel
 
 from app import db
@@ -114,7 +115,7 @@ def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:
                     extraction.categories,
                     resolved_skus,
                     extraction.mentioned_terms,
-                    [u.model_dump() for u in extraction.unmet_needs],
+                    Json([u.model_dump() for u in extraction.unmet_needs]),
                     extraction.detected_lang,
                     extraction.summary_en,
                     classifier.label,
