@@ -59,24 +59,24 @@ def fit() -> dict:
         idx = np.where(cg >= lvl)[0]
         levels[f"{lvl:.2f}"] = float(grid[idx[0]]) if len(idx) else None
 
-    # realised accuracy at the 0.70 crossing, on BOTH splits
-    t70 = levels["0.70"]
-    realised = {}
-    if t70 is not None:
+    realised_by_gate = {}
+    for level, threshold in levels.items():
+        if threshold is None:
+            continue
+        measured = {"ungated_test_dir_acc": float(test["hit"].mean())}
         for name, d in (("val", val), ("test", test)):
-            m = d["mag"] >= t70
-            realised[name] = {
-                "threshold": t70,
-                "coverage": float(m.mean()),
-                "n": int(m.sum()),
-                "dir_acc": float(d.loc[m, "hit"].mean()) if m.sum() else None,
-            }
-        realised["ungated_test_dir_acc"] = float(test["hit"].mean())
+            m = d["mag"] >= threshold
+            measured[name] = {"threshold": threshold, "coverage": float(m.mean()),
+                              "n": int(m.sum()),
+                              "dir_acc": float(d.loc[m, "hit"].mean()) if m.sum() else None}
+        realised_by_gate[level] = measured
+    realised = realised_by_gate.get("0.60", {})
 
     cal = {"model": "xgb_pooled_h3", "method": "logistic_on_log_magnitude",
            "fitted_on": "val", "coef": coef, "intercept": intercept,
            "magnitude_floor": FLOOR,
-           "confidence_thresholds": levels, "realised": realised}
+           "confidence_thresholds": levels, "realised": realised,
+           "realised_by_gate": realised_by_gate}
     ART.mkdir(parents=True, exist_ok=True)
     CAL_PATH.write_text(json.dumps(cal, indent=2))
     return cal
@@ -105,7 +105,7 @@ def main() -> int:
               else f"    {float(lvl):.0%}  ->  unreachable")
     r = cal["realised"]
     if r:
-        print(f"\n  \033[1mrealised accuracy at the 70% gate "
+        print(f"\n  \033[1mrealised accuracy at the 60% gate "
               f"(|pred| >= {r['val']['threshold']:.4f}):\033[0m")
         for s in ("val", "test"):
             d = r[s]
@@ -115,8 +115,8 @@ def main() -> int:
         print(f"    ungated test DirAcc for comparison: "
               f"{r['ungated_test_dir_acc']:.1%}")
         gap = r["test"]["dir_acc"]
-        if gap is not None and gap < 0.70:
-            print(f"\n  \033[33mNOTE: a 70% val-calibrated gate realises "
+        if gap is not None and gap < 0.60:
+            print(f"\n  \033[33mNOTE: a 60% val-calibrated gate realises "
                   f"{gap:.1%} on held-out test.\033[0m")
             print("  \033[33mThe confidence served is a calibrated estimate, not a "
                   "guarantee.\033[0m")

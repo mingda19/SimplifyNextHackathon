@@ -13,7 +13,7 @@ from orchestrator.config import settings
 from orchestrator.graph import compile_graph, make_checkpointer
 from orchestrator.nodes.act import act
 from orchestrator.nodes.approval import build_summary
-from orchestrator.nodes.commit import commit, reset_idempotency
+from orchestrator.nodes.commit import commit
 from orchestrator.state import PlanStep, new_state
 from langgraph.types import Command
 
@@ -21,18 +21,19 @@ from langgraph.types import Command
 @pytest.fixture
 def live_graph(stack, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "fake_llm", True)
+    monkeypatch.setenv("SERVICE_AUTH_TOKEN", stack["env"]["SERVICE_AUTH_TOKEN"])
     monkeypatch.setattr(settings, "fake_inventory", False)
     monkeypatch.setattr(settings, "fake_feedback", False)
     monkeypatch.setattr(settings, "fake_pricing", False)
     for service in ("inventory", "feedback", "pricing"):
         monkeypatch.setattr(settings, service + "_url", stack["urls"][service])
     monkeypatch.setattr(settings, "ledger_path", tmp_path / "spend.json")
+    stack["sql"]("DELETE FROM operations")
+    stack["sql"]("DELETE FROM orders")
     stack["sql"]("UPDATE vendor_offers SET available_qty=10000 WHERE sku='RICE-5KG'")
-    reset_idempotency()
     saver = make_checkpointer(str(tmp_path / "checkpoints.db"))
     yield compile_graph(saver)
     saver.conn.close()
-    reset_idempotency()
 
 
 def plan_state(action="place_order"):
@@ -138,7 +139,7 @@ def test_all_five_errors_reach_adapt_with_body_intact(monkeypatch, tmp_path):
         def adapt(step, error, attempt_no):
             seen.append(error)
             return Adaptation(revised_step=PlanStep(**step), what_changed="Retry"), None
-        monkeypatch.setattr(services, "vendor_order", fail)
+        monkeypatch.setattr(services, "vendor_quote", fail)
         monkeypatch.setattr(llm, "adapt_step", adapt)
         saver = make_checkpointer(str(tmp_path / f"{code}.db"))
         try:
@@ -151,3 +152,47 @@ def test_all_five_errors_reach_adapt_with_body_intact(monkeypatch, tmp_path):
             assert code in result["halt_reason"]
         finally:
             saver.conn.close()
+
+
+def test_committed_order_replay_returns_original_result(live_graph, api, stack):
+    state = plan_state()
+    state['approval'] = 'approved'
+    quote = api('inventory', 'POST', '/vendor/VENDOR-COMMUNITY/quote',
+                json={'sku': 'RICE-5KG', 'qty': 250}).json()
+    state['staged'] = [{'type': 'order', 'step': state['plan']['steps'][0], 'result': quote}]
+    first = commit(state)
+    # No process-local guard: a new HTTP call/session returns the persisted result.
+    second = commit(state)
+    assert first['outcome'] == second['outcome']
+    assert stack['sql']('SELECT count(*) FROM orders')[0][0] == 1
+    assert first['outcome']['total_sgd'] == 562.5
+
+
+def test_type_a_approval_never_buys(live_graph, stack):
+    state = new_state('donation-' + uuid.uuid4().hex, 'A')
+    cfg = {'configurable': {'thread_id': state['thread_id']}}
+    assert '__interrupt__' in live_graph.invoke(state, cfg)
+    result = live_graph.invoke(Command(resume={'decision': 'approved'}), cfg)
+    assert result['outcome']['kind'] == 'acquisition_checklist'
+    assert stack['sql']('SELECT count(*) FROM orders')[0][0] == 0
+
+
+def test_real_lot_validation_adapts_without_issuing_stock(live_graph, monkeypatch, stack):
+    from orchestrator import llm
+    from orchestrator.state import Plan
+    sku = 'BEANS-CANNED-400G'
+    plan = Plan(stockout_sku=sku, days_until_failure=1, reasoning='Issue live stock', steps=[
+        {'action': 'reallocate_lot', 'sku': sku, 'qty': 1,
+         'lot_id': 'LOT-BEANS-CANNED-400G-EXPIRED'}])
+    monkeypatch.setattr(llm, 'predict_plan', lambda *a: (plan, None))
+    state = new_state('lot-' + uuid.uuid4().hex)
+    cfg = {'configurable': {'thread_id': state['thread_id']}}
+    before = stack['sql']('SELECT on_hand FROM items WHERE sku=%s', (sku,))[0][0]
+    result = live_graph.invoke(state, cfg)
+    assert '__interrupt__' in result
+    assert any(a.get('error_code') == 'LOT_EXPIRED' for a in result['attempts'])
+    assert not result.get('halt_reason')
+    assert stack['sql']('SELECT on_hand FROM items WHERE sku=%s', (sku,))[0][0] == before
+    approved = live_graph.invoke(Command(resume={'decision': 'approved'}), cfg)
+    assert not approved.get('halt_reason')
+    assert stack['sql']('SELECT on_hand FROM items WHERE sku=%s', (sku,))[0][0] == before - 1

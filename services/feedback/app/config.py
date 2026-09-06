@@ -32,8 +32,7 @@ class Settings:
     fake_llm: bool = _flag("FAKE_LLM", "1")
 
     aws_profile: str | None = os.getenv("AWS_PROFILE") or None
-    bedrock_region: str = os.getenv("BEDROCK_REGION") or os.getenv(
-        "AWS_REGION", "us-east-1")
+    bedrock_region: str = os.getenv("BEDROCK_REGION") or "us-east-1"
     # bedrock-runtime InvokeModel needs the INFERENCE PROFILE id (us. prefix).
     # The bare `anthropic.claude-haiku-4-5` is rejected on this path -- Haiku 4.5
     # is INFERENCE_PROFILE-only in us-east-1. Matches orchestrator/config.py.

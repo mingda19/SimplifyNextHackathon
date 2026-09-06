@@ -1,5 +1,7 @@
 # Readiness audit — 6 September 2026
 
+> Historical findings from the pre-fix branch. See [BUGFIX_HANDOFF.md](BUGFIX_HANDOFF.md) for changes and current verification limits.
+
 **Verdict: the services have working happy paths, but the integrated project is not ready for a real Workstream 4 demo.** Login works through Vite. The most serious failure is that the existing graph places real orders before human approval, including for donation-fed charities; rejecting the plan does not undo those orders.
 
 Reviewed branch: `fix/frontend`, commit `b2f97f4`. This audit adds tests and a runner; it does not fix application behavior. A failing test is an outstanding finding, not an expected-failure marker.

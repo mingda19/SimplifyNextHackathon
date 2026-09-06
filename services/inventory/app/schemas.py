@@ -6,13 +6,13 @@ implementation detail and is not exposed through a public CRUD API.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, StringConstraints
-from pydantic import model_validator
+from pydantic import model_validator, field_validator
 
 
 Identifier = Annotated[
@@ -39,8 +39,9 @@ ShortText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
 ]
-NonNegativeInt = Annotated[int, Field(ge=0)]
-PositiveQuantity = Annotated[int, Field(gt=0)]
+MAX_QUANTITY = 2**31 - 1
+NonNegativeInt = Annotated[int, Field(ge=0, le=MAX_QUANTITY, strict=True)]
+PositiveQuantity = Annotated[int, Field(gt=0, le=MAX_QUANTITY, strict=True)]
 NonNegativeFloat = Annotated[float, Field(ge=0)]
 Money = Annotated[
     Decimal,
@@ -95,6 +96,24 @@ class ItemCreate(APIModel):
     unit_cost_sgd: Money
     preferred_vendor_id: Identifier | None = None
     dspi_series: SeriesText | None = None
+    opening_expiry_date: date | None = None
+    opening_source: LotSource | None = None
+
+    @field_validator("sku")
+    @classmethod
+    def addressable_sku(cls, value: str) -> str:
+        import re
+        if value.lower() == "alerts" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
+            raise ValueError("SKU must be a path-safe code and must not be reserved (alerts)")
+        return value
+
+    @model_validator(mode="after")
+    def opening_lot_required(self) -> ItemCreate:
+        if self.on_hand and (self.opening_expiry_date is None or self.opening_source is None):
+            raise ValueError("opening stock requires opening_expiry_date and opening_source")
+        if self.on_hand and self.opening_expiry_date < datetime.now(timezone.utc).date():
+            raise ValueError("opening stock must not be expired")
+        return self
 
 
 class ItemUpdate(APIModel):
@@ -212,6 +231,7 @@ class VendorOrderRequest(APIModel):
 
     sku: Identifier
     qty: PositiveQuantity
+    expected_unit_price_sgd: Money | None = None
 
 
 class VendorOrderResponse(APIModel):
@@ -232,6 +252,18 @@ class AllocationRequest(APIModel):
 
     lot_id: Identifier
     qty: PositiveQuantity
+
+
+class ReceiptRequest(APIModel):
+    qty: PositiveQuantity
+    expiry_date: date
+    source: LotSource
+
+    @model_validator(mode="after")
+    def unexpired(self):
+        if self.expiry_date < datetime.now(timezone.utc).date():
+            raise ValueError("received stock must not be expired")
+        return self
 
 
 class AllocationResponse(APIModel):

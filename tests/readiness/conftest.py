@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from urllib.parse import urlparse
 
 import httpx
@@ -40,16 +41,17 @@ def stack(tmp_path_factory):
     runtime = tmp_path_factory.mktemp("pantry-readiness")
     shutil.copytree(ROOT / "services", runtime / "services", ignore=shutil.ignore_patterns(
         "__pycache__", "*.db", "*.db-wal", "*.db-shm", ".venv", ".pytest_cache", "spend.json"))
-    fixed = {"inventory": 8000, "auth": 8001, "feedback": 8002, "pricing": 8006, "agent": 8003}
+    fixed = {"inventory": 8000, "auth": 8001, "feedback": 8002, "pricing": 8004, "agent": 8003}
     urls = {name: f"http://127.0.0.1:{fixed[name] if os.getenv('QA_BROWSER_PORTS') == '1' else free_port()}"
             for name in fixed}
     env = {**os.environ, "DATABASE_URL": dsn, "FAKE_LLM": "1", "FAKE_SERVICES": "0",
            "FAKE_INVENTORY": "0", "FAKE_FEEDBACK": "0", "FAKE_PRICING": "0",
            "INVENTORY_URL": urls["inventory"], "FEEDBACK_URL": urls["feedback"],
-           "PRICING_URL": urls["pricing"], "AUTH_JWT_SECRET": "readiness-tests-only-secret-at-least-32-bytes",
+           "PRICING_URL": urls["pricing"], "AUTH_URL": urls["auth"],
+           "SERVICE_AUTH_TOKEN": "readiness-internal-token-at-least-32-bytes", "AUTH_JWT_SECRET": "readiness-tests-only-secret-at-least-32-bytes",
            "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "OMP_NUM_THREADS": "1",
            "PYTHONIOENCODING": "utf-8"}
-    env.pop("PYTHONPATH", None)
+    env["PYTHONPATH"] = str(runtime / "services")
     services = runtime / "services"
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -93,7 +95,12 @@ def stack(tmp_path_factory):
                 time.sleep(0.2)
             else:
                 pytest.fail(f"{name} did not become healthy: {log_path.read_text(encoding='utf-8')}")
-        yield {"urls": urls, "client": client, "sql": sql, "runtime": runtime, "env": env}
+        response = client.post(urls["auth"] + "/auth/signup", json={
+            "email": f"stack-{uuid.uuid4().hex}@example.org", "password": "ReadinessTest123",
+            "display_name": "Readiness operator"})
+        assert response.status_code == 201, response.text
+        yield {"urls": urls, "client": client, "sql": sql, "runtime": runtime, "env": env,
+               "headers": {"Authorization": "Bearer " + response.json()["token"]}}
     finally:
         client.close()
         for proc in reversed(processes):
@@ -110,6 +117,8 @@ def stack(tmp_path_factory):
 
 @pytest.fixture
 def api(stack):
-    def request(service, method, path, **kwargs):
-        return stack["client"].request(method, stack["urls"][service] + path, **kwargs)
+    def request(service, method, path, authenticated=True, **kwargs):
+        headers = dict(stack["headers"]) if authenticated else {}
+        headers.update(kwargs.pop("headers", {}))
+        return stack["client"].request(method, stack["urls"][service] + path, headers=headers, **kwargs)
     return request

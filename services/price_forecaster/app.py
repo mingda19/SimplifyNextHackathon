@@ -5,7 +5,7 @@ price_forecaster HTTP service — workstream 3.
 Serves the contract the orchestrator's `sense` node calls (see
 services/orchestrator/services.py::get_price_forecast).
 
-    uvicorn app:app --port 8003 --reload
+    uvicorn app:app --port 8004 --reload
     make serve
 """
 from __future__ import annotations

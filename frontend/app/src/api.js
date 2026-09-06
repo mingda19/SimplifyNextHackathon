@@ -7,11 +7,12 @@ const TOKEN_KEY = 'pantry.token'
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
 export const setToken = t => t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
 
-async function request(path, { method = 'GET', body, auth = true } = {}) {
+async function request(path, { method = 'GET', body, auth = true, idempotencyKey } = {}) {
   const headers = {}
   if (body !== undefined) headers['content-type'] = 'application/json'
   const token = getToken()
   if (auth && token) headers['Authorization'] = `Bearer ${token}`
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
 
   let res
   try {
@@ -30,7 +31,7 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
   if (!res.ok) {
     const detail = data?.detail ?? data
     const message = typeof detail === 'string' ? detail
-      : detail?.message || `Request failed (${res.status})`
+      : detail?.message || (Array.isArray(detail) ? detail.map(e => e.msg).join('; ') : `Request failed (${res.status})`)
     throw Object.assign(new Error(message), { status: res.status, detail })
   }
   return data
@@ -56,11 +57,12 @@ export const api = {
   createStock: b => request('/api/inventory/inventory', { method: 'POST', body: b }),
   updateStock: (sku, b) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`, { method: 'PATCH', body: b }),
   deleteStock: sku => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`, { method: 'DELETE' }),
-  allocate: (sku, b) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}/allocate`, { method: 'POST', body: b }),
+  allocate: (sku, b, key) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}/allocate`, { method: 'POST', body: b, idempotencyKey: key }),
+  receive: (sku, b, key) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}/receive`, { method: 'POST', body: b, idempotencyKey: key }),
   alerts: () => request('/api/inventory/inventory/alerts'),
 
   // --- feedback -----------------------------------------------------------
-  submitFeedback: b => request('/api/feedback/feedback', { method: 'POST', body: b, auth: false }),
+  submitFeedback: b => request('/api/feedback/feedback', { method: 'POST', body: b }),
   feedback: q => request(`/api/feedback/feedback${q ? '?' + q : ''}`),
   unmetNeeds: () => request('/api/feedback/feedback/unmet-needs'),
   feedbackMetrics: () => request('/api/feedback/metrics'),

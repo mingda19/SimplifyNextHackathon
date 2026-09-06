@@ -83,6 +83,7 @@ def order_from_vendor(
     id: Identifier,
     payload: VendorOrderRequest,
     db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=200)] = None,
     demo_rate_limit_key: Annotated[
         str | None,
         Header(alias=DEMO_RATE_LIMIT_HEADER),
@@ -91,7 +92,7 @@ def order_from_vendor(
     """Revalidate the request and reserve vendor stock in one transaction."""
 
     enforce_demo_rate_limit(demo_rate_limit_key)
-    return place_vendor_order(db, vendor_id=id, payload=payload)
+    return place_vendor_order(db, vendor_id=id, payload=payload, idempotency_key=idempotency_key)
 
 
 __all__ = ["router"]

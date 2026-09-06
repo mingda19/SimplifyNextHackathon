@@ -15,6 +15,7 @@ from psycopg2.extras import Json
 def item(sku=None, **changes):
     return {"sku": sku or f"QA-{uuid.uuid4().hex[:10]}", "name": "QA item",
             "category": "QA", "unit": "pack", "on_hand": 20,
+            "opening_expiry_date": "2099-01-01", "opening_source": "DONATED",
             "reorder_point": 10, "avg_daily_draw": 2, "unit_cost_sgd": 2.40, **changes}
 
 
@@ -75,12 +76,12 @@ def test_revoked_request_link_cannot_be_recorded_as_used(api, charity):
 
 @pytest.mark.parametrize("service,path", [("inventory", "/inventory"), ("feedback", "/feedback"), ("agent", "/agent/runs")])
 def test_private_reads_require_authentication(api, service, path):
-    response = api(service, "GET", path)
+    response = api(service, "GET", path, authenticated=False)
     assert response.status_code in (401, 403), f"Anonymous {service} read returned {response.status_code}"
 
 
 def test_inventory_mutation_requires_authentication(api):
-    response = api("inventory", "POST", "/inventory", json=item())
+    response = api("inventory", "POST", "/inventory", json=item(), authenticated=False)
     assert response.status_code in (401, 403), f"Anonymous inventory creation returned {response.status_code}"
 
 
@@ -101,8 +102,13 @@ def test_incoming_stock_is_allocatable(api):
     payload = item(on_hand=0)
     assert api("inventory", "POST", "/inventory", json=payload).status_code == 201
     path = "/inventory/" + payload["sku"]
-    # Exact request issued by StockMovement's Incoming tab.
-    assert api("inventory", "PATCH", path, json={"on_hand": 10}).status_code == 200
+    # The old PATCH is rejected; the Incoming tab records an explicit receipt.
+    assert api("inventory", "PATCH", path, json={"on_hand": 10}).status_code == 422
+    receipt = api("inventory", "POST", path + "/receive", json={
+        "qty": 10, "expiry_date": "2099-01-01", "source": "DONATED"})
+    assert receipt.status_code == 201, receipt.text
+    assert api("inventory", "POST", path + "/allocate", json={
+        "qty": 3, "lot_id": receipt.json()["lot_id"]}).status_code == 200
     detail = api("inventory", "GET", path).json()
     assert sum(lot["qty"] for lot in detail["lots"]) == detail["on_hand"], detail
 
@@ -175,7 +181,7 @@ def test_agent_run_cannot_be_approved_anonymously(api):
         time.sleep(0.1)
     assert row["status"] == "pending_approval", row
     approved = api("agent", "POST", f"/agent/runs/{thread_id}/decision",
-                   json={"decision": "approved", "decided_by": "forged@example.org"})
+                   json={"decision": "approved", "decided_by": "forged@example.org"}, authenticated=False)
     assert approved.status_code in (401, 403), approved.text
 
 
@@ -186,8 +192,15 @@ def test_pricing_calibration_statistics_match_the_active_gate(api):
     artifact = json.loads((Path(__file__).resolve().parents[2] /
                           "services/price_forecaster/artifacts/calibration.json").read_text())
     active_threshold = artifact["confidence_thresholds"][f"{forecast['gate']['threshold']:.2f}"]
-    assert artifact["realised"]["test"]["threshold"] == pytest.approx(active_threshold), (
-        "API labels calibration results as 'at_gate' but saved results use a different confidence threshold")
+    cal = forecast["calibration"]
+    if artifact["realised"]["test"]["threshold"] != active_threshold:
+        # Unmeasured statistics must not be relabelled as results at the active gate.
+        assert cal["test_dir_acc_at_gate"] is None
+        assert cal["test_n_at_gate"] is None
+        assert not cal["statistics_available_at_gate"]
+    else:
+        assert cal["test_n_at_gate"] == artifact["realised"]["test"]["n"]
+
 
 
 @pytest.mark.parametrize("query", [{"series": "NOT-A-COMMODITY"}, {"horizon_months": 1}, {"horizon_months": 0}])
@@ -240,3 +253,114 @@ def test_rate_limit_retry_after(api):
     assert 0 < delay <= 5
     time.sleep(delay)
     assert api("inventory", "POST", "/vendor/VENDOR-RAPID/quote", json=body, headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize('service,path,method,body', [
+    ('inventory', '/inventory', 'GET', None),
+    ('feedback', '/feedback', 'GET', None),
+    ('agent', '/agent/runs', 'GET', None),
+    ('agent', '/agent/runs', 'POST', {'charity_type': 'B'}),
+    ('agent', '/agent/runs/nonexistent/decision', 'POST', {'decision': 'approved'}),
+])
+def test_recipient_cannot_access_private_workflows(api, charity, service, path, method, body):
+    _, _, headers = charity
+    person = {'email': f'permission-{uuid.uuid4().hex}@example.org',
+              'password': 'ReadinessTest123', 'display_name': 'Recipient'}
+    assert api('auth', 'POST', '/auth/recipients', headers=headers, json=person).status_code == 201
+    token = api('auth', 'POST', '/auth/login', json={k: person[k] for k in ('email', 'password')}).json()['token']
+    response = api(service, method, path, headers={'Authorization': 'Bearer ' + token}, json=body)
+    assert response.status_code == 403
+
+
+def test_service_credential_cannot_approve(api, stack):
+    response = api('agent', 'POST', '/agent/runs/nonexistent/decision', authenticated=False,
+                   headers={'X-Service-Token': stack['env']['SERVICE_AUTH_TOKEN']},
+                   json={'decision': 'approved'})
+    assert response.status_code == 401
+
+
+def test_concurrent_same_order_key_commits_once(api, stack):
+    stack['sql']('DELETE FROM operations')
+    stack['sql']('DELETE FROM orders')
+    stack['sql']("UPDATE vendor_offers SET available_qty=10000 WHERE vendor_id='VENDOR-COMMUNITY' AND sku='RICE-5KG'")
+    body = {'sku': 'RICE-5KG', 'qty': 250, 'expected_unit_price_sgd': 2.25}
+    headers = {'Idempotency-Key': 'concurrent-' + uuid.uuid4().hex}
+    def order(_):
+        return api('inventory', 'POST', '/vendor/VENDOR-COMMUNITY/order', json=body, headers=headers)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(order, range(2)))
+    assert [r.status_code for r in responses] == [200, 200]
+    assert responses[0].json() == responses[1].json()
+    assert stack['sql']('SELECT count(*) FROM orders')[0][0] == 1
+    changed = api('inventory', 'POST', '/vendor/VENDOR-COMMUNITY/order',
+                  json={**body, 'qty': 251}, headers=headers)
+    assert changed.status_code == 409 and changed.json()['code'] == 'IDEMPOTENCY_CONFLICT'
+
+
+def test_price_change_requires_new_approval(api, stack):
+    response = api('inventory', 'POST', '/vendor/VENDOR-HARVEST/order',
+                   json={'sku': 'RICE-5KG', 'qty': 250, 'expected_unit_price_sgd': 0.01},
+                   headers={'Idempotency-Key': 'price-' + uuid.uuid4().hex})
+    assert response.status_code == 409 and response.json()['code'] == 'PRICE_CHANGED'
+
+
+def test_monthly_budget_cannot_be_overspent_by_concurrent_orders(api, stack):
+    stack['sql']('DELETE FROM operations')
+    stack['sql']('DELETE FROM orders')
+    stack['sql']("UPDATE vendor_offers SET available_qty=10000 WHERE sku='RICE-5KG'")
+    # Eight orders cost S$4,500. The next S$562.50 order must be refused.
+    for _ in range(8):
+        response = api('inventory', 'POST', '/vendor/VENDOR-COMMUNITY/order', json={'sku': 'RICE-5KG', 'qty': 250})
+        assert response.status_code == 200, response.text
+    def order(_):
+        return api('inventory', 'POST', '/vendor/VENDOR-COMMUNITY/order', json={'sku': 'RICE-5KG', 'qty': 250})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(order, range(2)))
+    assert all(r.status_code == 409 and r.json()['code'] == 'MONTHLY_BUDGET_EXCEEDED' for r in responses)
+    assert stack['sql']('SELECT sum(qty * unit_price_sgd) FROM orders')[0][0] == 4500
+
+
+def test_public_link_enforces_revocation_and_separates_participants(api, charity, stack):
+    _, _, headers = charity
+    link = api('auth', 'POST', '/auth/request-links', headers=headers).json()['token']
+    def submit(participant):
+        return api('feedback', 'POST', '/feedback', authenticated=False, json={
+            'request_link': link, 'participant_id': participant, 'beneficiary_id': 'FORGED', 'text': 'Need rice'})
+    first_id, second_id = str(uuid.uuid4()), str(uuid.uuid4())
+    responses = [submit(first_id), submit(first_id), submit(second_id)]
+    assert all(r.status_code == 202 for r in responses)
+    ids = [r.json()['id'] for r in responses]
+    rows = stack['sql']('SELECT beneficiary_id FROM feedback.feedback_entries WHERE id=ANY(%s) ORDER BY id', (ids,))
+    assert rows[0][0] == rows[1][0] and rows[0][0] != rows[2][0]
+    assert all(row[0].startswith('ANON-') for row in rows)
+    assert api('auth', 'DELETE', '/auth/request-links/' + link, headers=headers).status_code == 200
+    assert submit(first_id).status_code == 403
+
+
+def test_concurrent_approvals_use_signed_identity_and_commit_once(api, charity, stack):
+    _, created, headers = charity
+    stack['sql']('DELETE FROM operations')
+    stack['sql']('DELETE FROM orders')
+    stack['sql']("UPDATE vendor_offers SET available_qty=10000 WHERE sku='RICE-5KG'")
+    response = api('agent', 'POST', '/agent/runs', headers=headers, json={'charity_type': 'B'})
+    assert response.status_code == 202
+    thread_id = response.json()['thread_id']
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        row = api('agent', 'GET', '/agent/runs/' + thread_id, headers=headers).json()
+        if row['status'] != 'running':
+            break
+        time.sleep(.1)
+    assert row['status'] == 'pending_approval', row
+    assert isinstance(row['summary'], dict)
+    assert stack['sql']('SELECT count(*) FROM orders')[0][0] == 0
+    def approve(_):
+        return api('agent', 'POST', f'/agent/runs/{thread_id}/decision', headers=headers,
+                   json={'decision': 'approved', 'decided_by': 'forged@example.org'})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(approve, range(2)))
+    assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
+    assert stack['sql']('SELECT count(*) FROM orders')[0][0] == 1
+    saved = api('agent', 'GET', '/agent/runs/' + thread_id).json()
+    assert saved['decided_by'] == created['user']['email']
+    assert saved['outcome']['total_sgd'] > 0

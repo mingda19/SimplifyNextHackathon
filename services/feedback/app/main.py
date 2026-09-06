@@ -12,13 +12,19 @@ lang, and channel are committed before the background task is even scheduled.
 from __future__ import annotations
 
 import logging
+import hashlib
+import hmac
+import os
+from uuid import UUID
+import httpx
 from datetime import datetime
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from pantry_common.security import current_user, require_operator, signing_secret
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import Json
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app import db
 from app.config import settings
@@ -42,10 +48,13 @@ app.add_middleware(
 
 
 class FeedbackIn(BaseModel):
-    beneficiary_id: str
-    text: str
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    beneficiary_id: str | None = Field(default=None, min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=10000)
     lang: Optional[str] = None
     channel: str = "web"
+    request_link: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    participant_id: UUID | None = None
 
 
 @app.on_event("startup")
@@ -54,7 +63,34 @@ def on_startup() -> None:
 
 
 @app.post("/feedback", status_code=202)
-def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
+def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks,
+                  authorization: str | None = Header(None)):
+    if payload.request_link:
+        if not payload.participant_id:
+            raise HTTPException(422, "participant_id is required with a request link")
+        # Resolve on every submission, so a previously opened revoked link
+        # cannot continue posting. Auth performs the active-check atomically.
+        try:
+            with httpx.Client(timeout=5) as client:
+                response = client.post(os.getenv("AUTH_URL", "http://localhost:8001").rstrip('/') +
+                                       f"/auth/request-links/{payload.request_link}/used")
+            if response.status_code != 200:
+                raise HTTPException(403, "this request link is not active")
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, "request link validation unavailable") from exc
+        digest = hmac.new(signing_secret().encode(),
+                          f"{payload.request_link}:{payload.participant_id}".encode(), hashlib.sha256).hexdigest()
+        beneficiary_id = "ANON-" + digest
+    else:
+        user = current_user(authorization)
+        if user.get("role") == "recipient":
+            beneficiary_id = user.get("beneficiary_id")
+        elif user.get("role") == "charity":
+            beneficiary_id = payload.beneficiary_id or "STAFF-" + user["sub"]
+        else:
+            raise HTTPException(403, "feedback requires a recipient or charity account")
+        if not beneficiary_id:
+            raise HTTPException(403, "recipient identity is missing")
     with db.get_cursor() as cur:
         cur.execute(
             """
@@ -62,7 +98,7 @@ def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
             VALUES (%s, %s, %s, %s)
             RETURNING id
             """,
-            (payload.beneficiary_id, payload.text, payload.lang, payload.channel),
+            (beneficiary_id, payload.text, payload.lang, payload.channel),
         )
         feedback_id = cur.fetchone()["id"]
 
@@ -157,7 +193,7 @@ def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:
             )
 
 
-@app.get("/feedback")
+@app.get("/feedback", dependencies=[Depends(require_operator)])
 def get_feedback(
     since: Optional[datetime] = None,
     urgency: Optional[int] = None,
@@ -193,7 +229,7 @@ def get_feedback(
         return cur.fetchall()
 
 
-@app.get("/feedback/unmet-needs")
+@app.get("/feedback/unmet-needs", dependencies=[Depends(require_operator)])
 def get_unmet_needs(since: Optional[datetime] = None, min_confidence: float = 0.0):
     """Ranked unmet needs for the agent. `gap: true` = no stocked SKU covers it."""
     return aggregate_unmet_needs(since=since, min_confidence=min_confidence)
@@ -215,7 +251,7 @@ def health():
         return {"status": "degraded", "detail": str(exc)}
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(require_operator)])
 def get_metrics():
     with db.get_cursor() as cur:
         cur.execute(

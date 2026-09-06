@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { Banner, Empty, Modal, Pill, ServiceDown, Stat } from '../components/ui'
 
@@ -148,7 +148,7 @@ function ItemEditor({ item, onClose, onSaved }) {
     try {
       if (isNew) {
         await api.createStock({ ...body, sku: form.sku.trim().toUpperCase(),
-                                on_hand: num(form.on_hand) ?? 0 })
+                                on_hand: 0 })
         onSaved(`Added ${form.sku.toUpperCase()}.`)
       } else {
         await api.updateStock(item.sku, body)
@@ -184,10 +184,7 @@ function ItemEditor({ item, onClose, onSaved }) {
             <input required value={form.unit} onChange={set('unit')} placeholder="bag" /></div>
         </div>
         <div className="grid g2">
-          {isNew && (
-            <div className="field"><label>Opening quantity</label>
-              <input type="number" min="0" value={form.on_hand} onChange={set('on_hand')} /></div>
-          )}
+          {isNew && <p className="muted small">After adding the item, use Move → Incoming to record its opening lots.</p>}
           <div className="field"><label>Reorder point</label>
             <input type="number" min="0" required value={form.reorder_point} onChange={set('reorder_point')} /></div>
           <div className="field"><label>Average daily draw</label>
@@ -218,6 +215,9 @@ function StockMovement({ item, onClose, onSaved }) {
   const [dir, setDir] = useState('out')
   const [qty, setQty] = useState('')
   const [lotId, setLotId] = useState('')
+  const [expiry, setExpiry] = useState('')
+  const [source, setSource] = useState('DONATED')
+  const operation = useRef(null)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -233,11 +233,14 @@ function StockMovement({ item, onClose, onSaved }) {
     e.preventDefault(); setErr(''); setBusy(true)
     const n = Number(qty)
     try {
+      const fingerprint = JSON.stringify([dir, n, lotId, expiry, source])
+      if (operation.current?.fingerprint !== fingerprint)
+        operation.current = { fingerprint, key: crypto.randomUUID() }
       if (dir === 'out') {
-        await api.allocate(item.sku, { lot_id: lotId, qty: n })
+        await api.allocate(item.sku, { lot_id: lotId, qty: n }, operation.current.key)
         onSaved(`Issued ${n} ${item.unit} of ${item.sku}.`)
       } else {
-        await api.updateStock(item.sku, { on_hand: item.on_hand + n })
+        await api.receive(item.sku, { qty: n, expiry_date: expiry, source }, operation.current.key)
         onSaved(`Received ${n} ${item.unit} into ${item.sku}.`)
       }
     } catch (ex) { setErr(ex.message); setBusy(false) }
@@ -255,6 +258,14 @@ function StockMovement({ item, onClose, onSaved }) {
         <button className={'tab' + (dir === 'in' ? ' active' : '')} onClick={() => setDir('in')}>Incoming</button>
       </div>
       <form onSubmit={submit}>
+        {dir === 'in' && <div className="grid g2">
+          <div className="field"><label>Expiry date</label>
+            <input type="date" required value={expiry} onChange={e => setExpiry(e.target.value)} /></div>
+          <div className="field"><label>Source</label>
+            <select value={source} onChange={e => setSource(e.target.value)}>
+              <option value="DONATED">Donated</option><option value="PURCHASED">Purchased</option>
+            </select></div>
+        </div>}
         {dir === 'out' && (
           <div className="field">
             <label>Draw from lot</label>
@@ -267,13 +278,13 @@ function StockMovement({ item, onClose, onSaved }) {
               ))}
             </select>
             <p className="muted small" style={{ marginTop: 6 }}>
-              The service refuses an expired lot. That refusal is what the agent adapts to.
+              Choose a lot with stock available and a valid expiry date.
             </p>
           </div>
         )}
         <div className="field">
           <label>{dir === 'out' ? 'Quantity to issue' : 'Quantity received'}</label>
-          <input type="number" min="1" required value={qty} onChange={e => setQty(e.target.value)} autoFocus />
+          <input type="number" min="1" max="2147483647" step="1" required value={qty} onChange={e => setQty(e.target.value)} autoFocus />
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose}>Cancel</button>

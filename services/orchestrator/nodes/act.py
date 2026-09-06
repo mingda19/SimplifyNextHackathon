@@ -11,7 +11,7 @@ import logging
 from typing import Any
 
 from .. import services
-from ..state import COMMITTING_ACTIONS, AgentState, Plan
+from ..state import AgentState, Plan
 
 log = logging.getLogger(__name__)
 
@@ -51,13 +51,10 @@ def act(state: AgentState) -> dict[str, Any]:
 
     # -- backend actions ---------------------------------------------------
     try:
-        if action in COMMITTING_ACTIONS:
-            result = services.vendor_order(step["vendor_id"], step["sku"], step["qty"])
-        elif action == "request_quote":
-            result = services.vendor_order(step["vendor_id"], step["sku"], step["qty"])
+        if action in {"place_order", "request_quote"}:
+            result = services.vendor_quote(step["vendor_id"], step["sku"], step["qty"])
         else:  # reallocate_lot
-            # TODO(W/G): real endpoint once workstream 1 ships lot reallocation.
-            result = {"status": "STAGED", "note": "reallocate_lot stub"}
+            result = services.allocate_lot(step["sku"], step["lot_id"], step["qty"], validate_only=True)
     except services.VendorError as exc:
         log.info("act: step %d failed %s — routing to adapt", i, exc.body["code"])
         return {
@@ -79,7 +76,9 @@ def act(state: AgentState) -> dict[str, Any]:
         "last_error": None,
         "retry_count": 0,           # reset per step — the cap is per step, not per run
         "staged": [*state.get("staged", []),
-                   {"type": "order", "step": step, "result": result}],
+                   {"type": {"place_order": "order", "request_quote": "quote",
+                             "reallocate_lot": "allocation"}[action],
+                    "step_index": i, "step": step, "result": result}],
         "attempts": [{"node": "act", "step_index": i, "action": action,
                       "ok": True, "result": result}],
     }

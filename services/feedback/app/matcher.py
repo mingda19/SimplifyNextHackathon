@@ -27,7 +27,10 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Callable, Optional
 
-from app.skus import ALIASES, KNOWN_GAPS, SKU_BY_CODE, SKU_CATALOGUE
+from app.skus import ALIASES, KNOWN_GAPS, SKU_BY_CODE, SKU_CATALOGUE, refresh_catalogue
+from threading import RLock
+
+_catalogue_lock = RLock()
 from app.skus import (
     ADULT_SIZED,
     GLUTEN_FREE,
@@ -147,7 +150,7 @@ def _match_alias(normalized_text: str) -> Optional[tuple[str, float]]:
     candidates = [
         (alias, sku)
         for alias, sku in ALIASES.items()
-        if _alias_present(alias, normalized_text)
+        if sku in SKU_BY_CODE and _alias_present(alias, normalized_text)
     ]
     if not candidates:
         return None
@@ -178,7 +181,7 @@ def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
 
     best: Optional[tuple[str, float]] = None
     for alias, sku in ALIASES.items():
-        if _NON_ASCII_RE.search(alias):
+        if sku not in SKU_BY_CODE or _NON_ASCII_RE.search(alias):
             continue  # fuzzy matching on non-Latin-script aliases isn't meaningful here
         for ngram in ngrams:
             # Require the first character to match before scoring. Plain
@@ -208,7 +211,7 @@ def _match_known_gap(normalized_text: str) -> Optional[str]:
     return None
 
 
-def match_term(
+def _match_term(
     text: str,
     llm_adjudicate: Optional[Callable[[str, list[str]], Optional[tuple[str, float]]]] = None,
     context: Optional[str] = None,
@@ -260,7 +263,9 @@ def match_term(
         return MatchResult(matched_sku=None, confidence=0.0, method="none")
 
     sku_code, confidence = candidate
-    sku_item = SKU_BY_CODE[sku_code]
+    sku_item = SKU_BY_CODE.get(sku_code)
+    if sku_item is None:
+        return MatchResult(matched_sku=None, confidence=0.0, method="none")
 
     for qualifier in _detect_qualifiers(qualifier_scope):
         scope = QUALIFIER_CATEGORY_SCOPE.get(qualifier)
@@ -276,3 +281,9 @@ def match_term(
             )
 
     return MatchResult(matched_sku=sku_code, confidence=confidence, method=method)
+
+
+def match_term(text, llm_adjudicate=None, context=None) -> MatchResult:
+    with _catalogue_lock:
+        refresh_catalogue()
+        return _match_term(text, llm_adjudicate=llm_adjudicate, context=context)

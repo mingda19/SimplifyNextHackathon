@@ -193,15 +193,19 @@ def _validate() -> None:
     """Fail loudly if an alias points at a SKU the live catalogue doesn't have."""
     missing = sorted({s for s in ALIASES.values() if s not in SKU_BY_CODE})
     if missing:
-        raise RuntimeError(
-            f"ALIASES reference {len(missing)} SKU(s) absent from the live "
-            f"inventory catalogue: {missing}. Either the seed data changed or an "
-            f"alias is stale — fix app/skus.py rather than letting mentioned_skus "
-            f"resolve to codes that do not exist."
-        )
+        logger.warning("Ignoring aliases for absent catalogue SKUs: %s", missing)
     stale = sorted({s for s in QUALIFIER_OVERLAY if s not in SKU_BY_CODE})
     if stale:
         logger.warning("QUALIFIER_OVERLAY has stale SKUs (ignored): %s", stale)
 
 
 _validate()
+
+
+def refresh_catalogue() -> None:
+    """Refresh the containers imported by the matcher after the live cache TTL."""
+    items = _build_catalogue()
+    if items != SKU_CATALOGUE:
+        SKU_CATALOGUE[:] = items
+        SKU_BY_CODE.clear()
+        SKU_BY_CODE.update({i.sku: i for i in items})

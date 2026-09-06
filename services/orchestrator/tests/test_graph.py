@@ -25,8 +25,6 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "fake_llm", True)
     for flag in ("fake_services", "fake_inventory", "fake_feedback", "fake_pricing"):
         monkeypatch.setattr(settings, flag, True)
-    from orchestrator.nodes.commit import reset_idempotency
-    reset_idempotency()
     yield
 
 
@@ -137,7 +135,7 @@ def test_retry_cap_escalates_instead_of_looping(graph, monkeypatch):
     def always_fail(vendor_id, sku, qty):
         raise services.VendorError(400, "MOQ_NOT_MET", "nope",
                                    [{"min_qty": 999_999}])
-    monkeypatch.setattr(services, "vendor_order", always_fail)
+    monkeypatch.setattr(services, "vendor_quote", always_fail)
 
     _, summary = run(graph, "e2e-cap")
     assert summary["guardrails"]["halt_reason"], "should escalate with a reason"
@@ -200,3 +198,94 @@ def test_ledger_accounts_for_cache_discount():
     # 1000 + 5000*0.1 = 1500 effective input tokens, not 6000
     assert led["cache_read"] == 5000
     assert led["usd"] == pytest.approx((1500 * 1.0 + 100 * 5.0) / 1e6, rel=1e-6)
+
+
+@pytest.mark.parametrize('charity_type', ['A', 'B'])
+def test_committing_calls_only_happen_after_approval(graph, monkeypatch, charity_type):
+    calls = []
+    original = services.vendor_order
+    def order(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(services, 'vendor_order', order)
+    thread = 'explicit-boundary-' + charity_type
+    cfg = {'configurable': {'thread_id': thread}}
+    result = graph.invoke(new_state(thread, charity_type), cfg)
+    assert '__interrupt__' in result and calls == []
+    result = graph.invoke(Command(resume={'decision': 'approved'}), cfg)
+    assert len(calls) == (1 if charity_type == 'B' else 0)
+    if calls:
+        assert calls[0]['idempotency_key'] == thread + ':0'
+        assert calls[0]['expected_unit_price_sgd'] > 0
+
+
+def test_quote_only_plan_does_not_commit(graph, monkeypatch):
+    from orchestrator import llm
+    from orchestrator.state import Plan
+    plan = Plan(stockout_sku='RICE-5KG', days_until_failure=8, reasoning='quote only', steps=[
+        {'action': 'request_quote', 'sku': 'RICE-5KG', 'qty': 250, 'vendor_id': 'VENDOR-COMMUNITY'}])
+    monkeypatch.setattr(llm, 'predict_plan', lambda *a: (plan, None))
+    monkeypatch.setattr(services, 'vendor_order', lambda *a, **kw: pytest.fail('quote committed'))
+    result, summary = run(graph, 'only-quote')
+    assert summary['queued']['total_sgd'] == 0
+    assert result['outcome']['orders'] == []
+
+
+def test_direct_commit_requires_approval(monkeypatch):
+    from orchestrator.nodes.commit import commit
+    monkeypatch.setattr(services, 'vendor_order', lambda *a, **kw: pytest.fail('unapproved commit'))
+    result = commit(new_state('unapproved'))
+    assert result['halt_reason'] and not result.get('outcome')
+
+
+def test_single_order_cap_is_per_order():
+    from orchestrator.nodes.approval import build_summary
+    state = new_state('money')
+    state['staged'] = [{'type': 'order', 'step': {'action': 'place_order'},
+                        'result': {'total_price_sgd': 1000}} for _ in range(2)]
+    summary = build_summary(state)
+    assert summary['queued']['total_sgd'] == 2000
+    assert not summary['guardrails']['exceeds_single_order_cap']
+    state['staged'][0]['result']['total_price_sgd'] = 1500.01
+    assert build_summary(state)['guardrails']['exceeds_single_order_cap']
+
+
+def test_donation_checklist_ranks_need_and_separates_flags():
+    from orchestrator.nodes.commit import commit
+    state = new_state('ranked', 'A')
+    state['approval'] = 'approved'
+    state['state_of_world'] = {'inventory': [
+        {'sku': 'LOW', 'on_hand': 9, 'avg_daily_draw': 1},
+        {'sku': 'HIGH', 'on_hand': 2, 'avg_daily_draw': 1}],
+        'unmet_needs': {'ranked': [{'mentioned_skus': ['LOW'], 'urgency': 5},
+                                  {'mentioned_skus': ['HIGH'], 'urgency': 3}]}}
+    state['staged'] = [{'step': {'action': 'place_order', 'sku': sku, 'qty': 10}}
+                       for sku in ['LOW', 'HIGH']]
+    state['staged'].append({'step': {'action': 'flag_for_human', 'sku': 'GAP', 'qty': 0}})
+    outcome = commit(state)['outcome']
+    assert [i['sku'] for i in outcome['items']] == ['HIGH', 'LOW']
+    assert [i['priority_score'] for i in outcome['items']] == [24, 5]
+    assert len(outcome['review_flags']) == 1
+
+
+def test_rate_limit_waits_before_readaptation(monkeypatch):
+    import importlib
+    module = importlib.import_module('orchestrator.nodes.adapt')
+    waits = []
+    monkeypatch.setattr(module.time, 'sleep', waits.append)
+    state = new_state('wait')
+    from orchestrator import fixtures
+    state['plan'] = fixtures.FAKE_PLAN
+    state['last_error'] = {'code': 'RATE_LIMITED', 'retry_after_seconds': 7,
+                           'failed_step': fixtures.FAKE_PLAN['steps'][0], 'step_index': 0}
+    result = module.adapt(state)
+    assert waits == [7] and result['retry_count'] == 1
+
+
+def test_legacy_checkpoint_cannot_commit(monkeypatch):
+    from orchestrator.nodes.commit import commit
+    monkeypatch.setattr(services, 'vendor_order', lambda *a, **kw: pytest.fail('legacy commit'))
+    state = new_state('old-checkpoint')
+    del state['approval_version']
+    state['approval'] = 'approved'
+    assert 'Legacy approval' in commit(state)['halt_reason']

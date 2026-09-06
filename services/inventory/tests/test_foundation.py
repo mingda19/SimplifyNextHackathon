@@ -39,6 +39,7 @@ def test_expected_database_tables_are_registered() -> None:
         "vendors",
         "orders",
         "vendor_offers",
+        "operations",
     }
 
 
@@ -58,7 +59,7 @@ def test_frozen_item_fields_are_preserved() -> None:
     }
 
 
-def test_inventory_contracts_do_not_expose_unrequested_fields() -> None:
+def test_inventory_contracts_include_opening_lot_metadata() -> None:
     assert set(ItemCreate.model_json_schema()["properties"]) == {
         "sku",
         "name",
@@ -70,9 +71,11 @@ def test_inventory_contracts_do_not_expose_unrequested_fields() -> None:
         "unit_cost_sgd",
         "preferred_vendor_id",
         "dspi_series",
+        "opening_expiry_date",
+        "opening_source",
     }
     assert set(ItemDetailResponse.model_json_schema()["properties"]) == {
-        *ItemCreate.model_json_schema()["properties"],
+        *(set(ItemCreate.model_json_schema()["properties"]) - {"opening_expiry_date", "opening_source"}),
         "lots",
         "days_cover",
     }

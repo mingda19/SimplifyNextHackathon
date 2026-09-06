@@ -23,7 +23,7 @@ python lstm_model.py
 python calibrate.py
 python evaluator.py --val
 python evaluator.py --test
-uvicorn app:app --port 8003        # or: make forecaster-serve
+uvicorn app:app --port 8004        # or: make forecaster-serve
 ```
 
 ## Endpoint
