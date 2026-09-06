@@ -30,3 +30,6 @@ dist/
 
 node_modules/
 services/feedback/seed/
+
+# Local readiness-test runtime and reports
+.qa/
