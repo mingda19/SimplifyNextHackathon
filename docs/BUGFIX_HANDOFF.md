@@ -17,9 +17,17 @@ This branch repairs the blockers recorded in [READINESS_AUDIT.md](READINESS_AUDI
 
 Install Docker and Node.js. From the repository root:
 
-1. Copy `.env.example` to `.env`. Set `AUTH_JWT_SECRET` and `SERVICE_AUTH_TOKEN` to **different** random values, each at least 32 characters. Generate each with `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+1. Run `node scripts/setup_auth.mjs` with Node.js 20.12 or newer. It creates `.env` from `.env.example` if missing, fills missing/invalid auth secrets, and preserves existing valid signing keys and database settings. The two secrets must be different random values of at least 32 characters. Alternatively generate each with `python -c "import secrets; print(secrets.token_urlsafe(48))"` and set `AUTH_JWT_SECRET` and `SERVICE_AUTH_TOKEN` in your existing `.env`.
 2. Run `docker compose up --build -d`. The bootstrap service upgrades the auth/feedback/agent schemas, and inventory runs Alembic including `0002_operation_replay`. Do not delete named volumes when rebuilding.
 3. In `frontend/app`, run `npm ci` and `npm run dev`. Sign in before accessing stock, feedback or agent actions.
+
+### Login stopped working after pulling the fixes
+
+The old auth service used `dev-only-change-me` when `AUTH_JWT_SECRET` was absent. The updated service refuses to start with a missing or short signing key, and Compose also requires `SERVICE_AUTH_TOKEN`. Pulling code does not update your gitignored `.env`. Existing passwords and account records are unchanged.
+
+From the repository root, run `node scripts/setup_auth.mjs`, then `docker compose up --build -d`. Restart all native services instead if you are not using Compose; native installs also need `python -m pip install -e .` for the new shared authentication package. All services must load the same signing key. Existing browser tokens may expire when the old key is replaced; sign in again with the existing account. Keep your existing `.env` database settings and named database volume.
+
+If login still fails, inspect `docker compose ps -a` and `docker compose logs --tail=80 auth schema-bootstrap`. A startup/configuration error differs from a `401 email or password is incorrect`; the latter means login reached the database-backed credential check. Verify the auth service uses the original account database before changing passwords or recreating accounts.
 
 | Service | Local port |
 |---|---|
