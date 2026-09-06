@@ -159,6 +159,37 @@ GOLDEN_CASES = [
         None,
         None,
     ),
+    # --- Phase 5a: Tamil diabetes term collides with the sugar alias (LIVE
+    # BUG). சர்க்கரை நோய் literally means "sugar disease" (diabetes); the
+    # bare சர்க்கரை alias inside it was matching SUGAR-1KG at 0.93 confidence
+    # -- a beneficiary saying "I have diabetes" was matched to a bag of sugar.
+    # Fixed as a SUGAR_FREE qualifier trigger, not by deleting the சர்க்கரை
+    # alias -- legitimate Tamil sugar requests must keep working (see the
+    # second case below). ---
+    (
+        "Tamil 'diabetes' (sugar disease) -> refuse, not SUGAR-1KG",
+        "சர்க்கரை நோய்",
+        None,
+        "SUGAR-1KG",
+        "sugar_free",
+    ),
+    (
+        "Tamil, legitimate sugar request must still work after the 5a fix",
+        "சர்க்கரை வேணும்",
+        "SUGAR-1KG",
+        None,
+        None,
+    ),
+    # --- Phase 5b: "milo" (a malted drink, not milk) false-matched MILK-UHT-1L
+    # at fuzzy 0.75. Not one of the four residual fuzzy false positives already
+    # documented above -- a distinct catalogue gap (no malted-drink SKU exists). ---
+    (
+        "milo -> catalogue gap, not MILK-UHT-1L",
+        "milo",
+        None,
+        None,
+        None,
+    ),
 ]
 
 

@@ -186,6 +186,9 @@ KNOWN_GAPS = {
     "粥": "rice congee is a prepared dish; not stocked",
     "porridge": "rice congee is a prepared dish; not stocked",
     "கஞ்சி": "rice congee is a prepared dish; not stocked",
+    # milo is a malted chocolate drink, not milk -- was false-matching
+    # MILK-UHT-1L at fuzzy 0.75 (Phase 5b). No malted-drink SKU exists.
+    "milo": "no malted-drink SKU in the catalogue",
 }
 
 

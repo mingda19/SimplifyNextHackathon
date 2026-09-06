@@ -78,6 +78,13 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
         "无糖",  # Mandarin: sugar-free
         "tanpa gula",  # Malay: without sugar
         "sarkarai illatha",  # Tamil (transliterated): without sugar
+        # Phase 5a: சர்க்கரை நோய் ("sugar disease" = diabetes) was matching
+        # SUGAR-1KG via the bare சர்க்கரை alias it contains -- a beneficiary
+        # saying "I have diabetes" was matched to a bag of sugar. Checked:
+        # this phrase is NOT itself a shorter substring of any ALIASES key
+        # (it's the alias that's a substring of THIS, the other way around),
+        # so it's safe to add without a new containment collision.
+        "சர்க்கரை நோய்",  # Tamil: diabetes ("sugar disease")
     ],
     LOW_SODIUM: ["low sodium", "low-sodium", "less salt", "no salt"],
     LACTOSE_FREE: ["lactose free", "lactose-free", "dairy free", "no dairy"],
