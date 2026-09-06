@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useAuth } from '../auth'
 import { Banner, Empty, Pill, ServiceDown, Stat } from '../components/ui'
+import { ItemEditor } from './Stock'
 
 const STATUS = {
   running:          { kind: 'mute',   label: 'running' },
@@ -18,6 +19,7 @@ export default function AgentActions() {
   const [open, setOpen] = useState(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [creatingSku, setCreatingSku] = useState(null)
 
   const load = () => api.runs().then(r => { setRuns(r); setErr(null) }).catch(setErr)
   useEffect(() => {
@@ -117,7 +119,10 @@ export default function AgentActions() {
         </div>
       )}
 
-      {detail && <RunDetail run={detail} busy={busy} onClose={() => setOpen(null)} onDecide={decide} />}
+      {detail && <RunDetail run={detail} busy={busy} onClose={() => setOpen(null)}
+        onDecide={decide} onCreateSku={setCreatingSku} />}
+      {creatingSku && <ItemEditor item={creatingSku} onClose={() => setCreatingSku(null)}
+        onSaved={m => { setCreatingSku(null); setNote(m + ' The agent can order it on the next run.') }} />}
     </>
   )
 }
@@ -125,7 +130,7 @@ export default function AgentActions() {
 // The four panels the guardrail node emits. `adaptations` gets the most space
 // on purpose: it is the only place you can see the agent hit a wall and reason
 // its way around it, which is the difference between a workflow and an agent.
-function RunDetail({ run, busy, onClose, onDecide }) {
+function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const s = run.summary || {}
   const { sensed = {}, predicted = {}, queued = {}, adaptations = [], guardrails = {} } = s
   const pending = run.status === 'pending_approval'
@@ -208,7 +213,20 @@ function RunDetail({ run, busy, onClose, onDecide }) {
                   <td>{st.action.replace(/_/g, ' ')}</td>
                   <td className="mono small">{st.sku}</td>
                   <td className="num">{st.qty || '—'}</td>
-                  <td className="small">{st.vendor_id || '—'}</td>
+                  <td className="small">
+                    {st.action === 'flag_for_human'
+                      // A gap means nothing in the catalogue can serve this need.
+                      // Ticking it off changes nothing — the fix is to create the
+                      // SKU so the agent can order it next run.
+                      ? <button className="btn-sm btn-primary" type="button"
+                          onClick={() => onCreateSku({
+                            __prefill: true,
+                            sku: st.sku,
+                            name: (st.rationale || st.sku).slice(0, 60),
+                            category: 'UNCATEGORISED',
+                          })}>Create this SKU</button>
+                      : (st.vendor_id || '—')}
+                  </td>
                   <td className="num">{st.value_sgd ? `S$${st.value_sgd.toFixed(2)}` : '—'}</td>
                 </tr>)
             })}</tbody>

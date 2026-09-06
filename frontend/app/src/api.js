@@ -58,6 +58,10 @@ export const api = {
   deleteStock: sku => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`, { method: 'DELETE' }),
   allocate: (sku, b) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}/allocate`, { method: 'POST', body: b }),
   alerts: () => request('/api/inventory/inventory/alerts'),
+  orders: status => request(`/api/inventory/orders${status ? '?status=' + status : ''}`),
+  inbound: () => request('/api/inventory/orders/inbound'),
+  receiveOrder: (id, body) => request(`/api/inventory/orders/${id}/receive`, { method: 'POST', body: body || {} }),
+  cancelOrder: id => request(`/api/inventory/orders/${id}/cancel`, { method: 'POST', body: {} }),
 
   // --- feedback -----------------------------------------------------------
   submitFeedback: b => request('/api/feedback/feedback', { method: 'POST', body: b, auth: false }),

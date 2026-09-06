@@ -4,6 +4,7 @@ import Login from './pages/Login'
 import Signup from './pages/Signup'
 import Shell from './pages/Shell'
 import Stock from './pages/Stock'
+import Orders from './pages/Orders'
 import AgentActions from './pages/AgentActions'
 import Feedback from './pages/Feedback'
 import People from './pages/People'
@@ -34,6 +35,7 @@ export default function App() {
       <Route element={<Protected><Shell /></Protected>}>
         <Route path="/" element={<Navigate to="/stock" replace />} />
         <Route path="/stock" element={<Stock />} />
+        <Route path="/orders" element={<Orders />} />
         <Route path="/agent" element={<AgentActions />} />
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/people" element={<People />} />
