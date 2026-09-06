@@ -93,7 +93,7 @@ export default function RequestPage() {
         localStorage.setItem(participantKey, participant)
       }
       await api.submitFeedback({
-        ...(token ? { request_link: token, participant_id: participant } : {}),
+        ...(token ? { request_link: token, beneficiary_id: participant } : {}),
         text: text.trim(),
         lang,
         channel: recording ? 'voice' : 'web',
