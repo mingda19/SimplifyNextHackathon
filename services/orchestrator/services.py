@@ -78,6 +78,29 @@ def get_unmet_needs() -> dict[str, Any]:
     return _get(settings.feedback_url, "/feedback/unmet-needs")
 
 
+def get_price_forecasts(series_names: list[str]) -> dict[str, Any]:
+    """Forecast every series the at-risk SKUs actually map to.
+
+    `sense` used to request a single hardcoded "Rice", so the agent timed every
+    purchase against the rice curve no matter what was low. This asks for the
+    commodities that are genuinely at risk this run.
+
+    A series with no forecast is not an error: perishables were deliberately
+    excluded from the price model (you cannot stockpile fresh vegetables, so a
+    forecast on them is not actionable). Those come back as `unavailable`.
+    """
+    if settings.fake_pricing:
+        return fixtures.PRICE_FORECAST_ENVELOPE
+    out: dict[str, Any] = {}
+    unavailable: list[str] = []
+    for name in series_names:
+        try:
+            out[name] = get_price_forecast(name)
+        except Exception:                              # noqa: BLE001
+            unavailable.append(name)
+    return {"forecasts": out, "no_forecast_for": unavailable}
+
+
 def get_price_forecast(series: str = "Rice") -> dict[str, Any]:
     if settings.fake_pricing:
         return fixtures.PRICE_FORECAST

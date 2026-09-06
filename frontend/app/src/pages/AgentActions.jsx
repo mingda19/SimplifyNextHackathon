@@ -153,10 +153,15 @@ function RunDetail({ run, busy, onClose, onDecide }) {
               {n.gap && <> <Pill kind="danger">no stocked SKU</Pill></>}
             </li>
           ))}
-          {sensed.price_signal?.series && (
-            <li>{sensed.price_signal.series} prices {sensed.price_signal.direction}
-              {' '}({sensed.price_signal.pct_change_3m}% / 3mo) → <strong>{sensed.price_signal.recommendation}</strong>
-              <span className="muted"> · data lag {sensed.price_signal.data_lag_months}mo</span></li>
+          {(sensed.price_signals || []).map((p, i) => (
+            <li key={`p${i}`}>{p.series} prices {p.direction} ({p.pct_change_3m}% / 3mo)
+              {' '}→ <strong>{p.recommendation}</strong>
+              <span className="muted"> · {Math.round((p.confidence || 0) * 100)}% confidence
+                · data lag {p.data_lag_months}mo</span></li>
+          ))}
+          {(sensed.price_signals || []).length === 0 && (
+            <li className="muted">No actionable price signal — everything at risk was
+              NEUTRAL or has no forecast (perishables are excluded from the price model).</li>
           )}
           {(sensed.unavailable_services || []).length > 0 && (
             <li className="muted">Reasoned without: {sensed.unavailable_services.join(', ')}</li>

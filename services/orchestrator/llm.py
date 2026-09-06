@@ -83,6 +83,58 @@ def _call(model: str, max_tokens: int, system: str, user: str, schema: type):
     return resp.parsed_output, led
 
 
+def _compact(sow: dict[str, Any]) -> dict[str, Any]:
+    """Trim SENSE's output to what PREDICT can actually act on.
+
+    The raw State of the World is ~11.7k tokens, and most of it is inert: 44
+    ranked needs each carrying `examples` and `near_misses`, plus every one of
+    40 SKUs including the 24 that are comfortably stocked. Sending all of it
+    costs tokens on every run and buries the handful of rows that matter.
+
+    Nothing is invented here — this only drops fields and rows PREDICT has no
+    use for, and it says how many it dropped so the model knows the list is
+    truncated rather than complete.
+    """
+    out: dict[str, Any] = {"as_of": sow.get("as_of")}
+
+    items = sow.get("inventory") or []
+    keep, skipped = [], 0
+    for i in items:
+        draw = i.get("avg_daily_draw") or 0
+        cover = (i.get("on_hand", 0) / draw) if draw else None
+        if i.get("on_hand", 0) < i.get("reorder_point", 0) or (
+                cover is not None and cover < 21):
+            keep.append({k: i.get(k) for k in
+                         ("sku", "name", "on_hand", "unit", "reorder_point",
+                          "avg_daily_draw", "unit_cost_sgd",
+                          "preferred_vendor_id", "dspi_series")}
+                        | {"days_cover": round(cover, 1) if cover else None})
+        else:
+            skipped += 1
+    out["inventory_at_risk"] = keep
+    out["inventory_healthy_count"] = skipped
+
+    out["alerts"] = sow.get("alerts")
+
+    needs = (sow.get("unmet_needs") or {}).get("ranked") or []
+    out["top_unmet_needs"] = [
+        {k: n.get(k) for k in ("need", "frequency", "urgency", "score",
+                               "mentioned_skus", "gap", "suggested_category")}
+        for n in needs[:12]
+    ]
+    out["unmet_needs_total"] = len(needs)
+
+    pf = sow.get("price_forecast") or {}
+    out["price_forecasts"] = {
+        name: {k: f.get(k) for k in
+               ("series", "recommendation", "confidence", "direction",
+                "pct_change_3m", "data_lag_months", "rationale")}
+        for name, f in (pf.get("forecasts") or {}).items()
+    }
+    out["price_no_forecast_for"] = pf.get("no_forecast_for") or []
+    return out
+
+
 def predict_plan(state_of_world: dict[str, Any],
                  degraded: list[str],
                  charity_type: str) -> tuple[Plan, dict[str, Any] | None]:
@@ -94,7 +146,7 @@ def predict_plan(state_of_world: dict[str, Any],
     payload = {
         "charity_type": charity_type,
         "baselines": BASELINES,
-        "state_of_world": state_of_world,
+        "state_of_world": _compact(state_of_world),
         "unavailable_services": degraded,
     }
     # sort_keys is not cosmetic — unsorted JSON is a silent cache invalidator.

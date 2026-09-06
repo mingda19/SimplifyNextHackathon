@@ -41,11 +41,18 @@ def build_summary(state: AgentState) -> dict[str, Any]:
             "below_reorder": (sow.get("alerts") or {}).get("below_reorder", []),
             "expiring_soon": (sow.get("alerts") or {}).get("expiring_soon", []),
             "top_unmet_needs": (sow.get("unmet_needs") or {}).get("ranked", [])[:3],
-            "price_signal": {
-                k: (sow.get("price_forecast") or {}).get(k)
-                for k in ("series", "direction", "recommendation",
-                          "pct_change_3m", "data_lag_months")
-            },
+            # SENSE now returns a forecast PER at-risk commodity, not one
+            # hardcoded series. Surface only the actionable ones — a screen full
+            # of NEUTRAL tells the approver nothing.
+            "price_signals": [
+                {k: f.get(k) for k in ("series", "direction", "recommendation",
+                                       "pct_change_3m", "confidence",
+                                       "data_lag_months")}
+                for f in ((sow.get("price_forecast") or {}).get("forecasts") or {}).values()
+                if f.get("recommendation") in ("BUY_NOW", "DEFER")
+            ],
+            "price_series_without_forecast":
+                (sow.get("price_forecast") or {}).get("no_forecast_for") or [],
             "unavailable_services": state.get("degraded_services", []),
         },
         "predicted": {

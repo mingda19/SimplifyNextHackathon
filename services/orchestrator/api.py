@@ -42,6 +42,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 _DIALECT = re.compile(r"^postgresql\+\w+://")
 
+# ONE compiled graph for the whole process.
+#
+# compile_graph() was previously called per request. Each call built a fresh
+# SqliteSaver over a new sqlite3.connect() that was never closed — 14 leaked
+# descriptors on one checkpoint file, with a background thread writing through
+# WAL at the same time. That is what produced the intermittent
+# "DatabaseError: file is not a database" on start_run and decide.
+_GRAPH = None
+_GRAPH_LOCK = threading.Lock()
+
+
+def _graph():
+    global _GRAPH
+    if _GRAPH is None:
+        with _GRAPH_LOCK:
+            if _GRAPH is None:
+                _GRAPH = compile_graph()
+    return _GRAPH
+
 
 def _conn():
     dsn = _DIALECT.sub("postgresql://", os.getenv("DATABASE_URL", ""))
@@ -66,7 +85,7 @@ def _jsonable(x: Any) -> Any:
 def _run_graph(thread_id: str, charity_type: str) -> None:
     """Execute until the approval interrupt, then park the summary."""
     try:
-        graph = compile_graph()
+        graph = _graph()
         cfg = {"configurable": {"thread_id": thread_id}}
         result = graph.invoke(new_state(thread_id, charity_type), cfg)
         if "__interrupt__" in result:
@@ -146,7 +165,7 @@ def decide(thread_id: str, payload: dict = Body(...)):
     if row["status"] != "pending_approval":
         raise HTTPException(409, f"run is '{row['status']}', not awaiting approval")
 
-    graph = compile_graph()
+    graph = _graph()
     cfg = {"configurable": {"thread_id": thread_id}}
     try:
         result = graph.invoke(Command(resume={"decision": decision}), cfg)
