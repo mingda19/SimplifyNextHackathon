@@ -64,6 +64,7 @@ export const api = {
   feedback: q => request(`/api/feedback/feedback${q ? '?' + q : ''}`),
   unmetNeeds: () => request('/api/feedback/feedback/unmet-needs'),
   feedbackMetrics: () => request('/api/feedback/metrics'),
+  feedbackHealth: () => request('/api/feedback/health', { auth: false }),
 
   // --- pricing ------------------------------------------------------------
   forecast: series => request(`/api/pricing/price/forecast?series=${encodeURIComponent(series)}`, { auth: false }),
@@ -74,4 +75,5 @@ export const api = {
   run: id => request(`/api/agent/agent/runs/${id}`),
   startRun: charity_type => request('/api/agent/agent/runs', { method: 'POST', body: { charity_type } }),
   decide: (id, decision, by) => request(`/api/agent/agent/runs/${id}/decision`, { method: 'POST', body: { decision, decided_by: by } }),
+  agentHealth: () => request('/api/agent/health', { auth: false }),
 }
