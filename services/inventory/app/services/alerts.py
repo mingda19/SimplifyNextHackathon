@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Item, Lot
+from app.models import Item, Lot, Order
 from app.schemas import AlertType, InventoryAlertResponse
 
 
@@ -49,6 +49,13 @@ def list_inventory_alerts(
     ).all()
     items = db.scalars(select(Item).order_by(Item.sku)).all()
 
+    # Stock already ordered and not yet delivered. `on_hand` does not move
+    # until goods physically arrive, so without this a SKU sits below its
+    # reorder point for the entire lead time.
+    inbound: dict[str, int] = {}
+    for o in db.scalars(select(Order).where(Order.status == "PLACED")).all():
+        inbound[o.sku] = inbound.get(o.sku, 0) + o.qty
+
     alerts: list[InventoryAlertResponse] = [
         InventoryAlertResponse(
             type=AlertType.EXPIRING_SOON,
@@ -63,10 +70,15 @@ def list_inventory_alerts(
     for item in items:
         days_cover = calculate_days_cover(item.on_hand, item.avg_daily_draw)
 
-        if item.on_hand < item.reorder_point:
+        on_the_way = inbound.get(item.sku, 0)
+        covered = (item.on_hand + on_the_way) >= item.reorder_point
+
+        if item.on_hand < item.reorder_point and not covered:
             alerts.append(
                 InventoryAlertResponse(
                     type=AlertType.BELOW_REORDER,
+                    qty_inbound=on_the_way,
+                    covered_by_inbound=False,
                     sku=item.sku,
                     message=(
                         f"On-hand quantity {item.on_hand} is below reorder point "

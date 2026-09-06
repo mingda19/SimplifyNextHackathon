@@ -51,7 +51,9 @@ def act(state: AgentState) -> dict[str, Any]:
 
     # -- backend actions ---------------------------------------------------
     try:
-        if action in {"place_order", "request_quote"}:
+        if action in COMMITTING_ACTIONS or action == "request_quote":
+            # QUOTE, never order. Nothing here may spend money — COMMIT does
+            # that, after a human has ticked the line.
             result = services.vendor_quote(step["vendor_id"], step["sku"], step["qty"])
         else:  # reallocate_lot
             result = services.allocate_lot(step["sku"], step["lot_id"], step["qty"], validate_only=True)

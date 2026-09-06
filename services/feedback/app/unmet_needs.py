@@ -55,7 +55,11 @@ def _norm_key(need: str) -> str:
 
 def aggregate(since: Optional[datetime] = None,
               min_confidence: float = 0.0) -> dict[str, Any]:
-    where = ["extraction_status = 'done'", "unmet_needs IS NOT NULL"]
+    # Resolved rows are excluded: once a charity has acted on a need, the agent
+    # must stop re-proposing it. Without this the same deficit is re-planned on
+    # every run forever.
+    where = ["extraction_status = 'done'", "unmet_needs IS NOT NULL",
+             "resolved_at IS NULL"]
     params: list = []
     if since is not None:
         where.append("received_at >= %s")

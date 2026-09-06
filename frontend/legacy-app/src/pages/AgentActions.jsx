@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useAuth } from '../auth'
 import { Banner, Empty, Pill, ServiceDown, Stat } from '../components/ui'
+import { ItemEditor } from './Stock'
 
 const STATUS = {
   running:          { kind: 'mute',   label: 'running' },
@@ -20,7 +21,7 @@ export default function AgentActions() {
   const [open, setOpen] = useState(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const [charityType, setCharityType] = useState('B')
+  const [creatingSku, setCreatingSku] = useState(null)
 
   const load = () => api.runs().then(r => { setRuns(r); setErr(null) }).catch(setErr)
   useEffect(() => {
@@ -36,13 +37,18 @@ export default function AgentActions() {
     catch (ex) { setNote(''); setErr(ex) } finally { setBusy(false) }
   }
 
-  const decide = async (id, decision) => {
+  const decide = async (id, decision, approvedSteps) => {
     setBusy(true)
     try {
-      const r = await api.decide(id, decision, user?.email)
-      setNote(r.status === 'failed' ? 'Commit stopped. Open the run to review any completed actions and the failure.' : decision === 'approved'
-        ? `Approved. ${r.outcome?.kind === 'purchase_order' ? `Order committed, S$${r.outcome.total_sgd}.` : 'Checklist issued.'}`
-        : 'Plan rejected.')
+      const r = await api.decide(id, decision, user?.email, approvedSteps)
+      const dec = r.outcome?.declined_steps?.length || 0
+      const res = r.outcome?.feedback_resolved || 0
+      setNote(decision === 'approved'
+        ? `Approved${dec ? ` (${dec} line${dec > 1 ? 's' : ''} declined)` : ''}. `
+          + `${r.outcome?.kind === 'purchase_order'
+              ? `Committed S$${(r.outcome.total_sgd ?? 0).toFixed(2)}.` : 'Checklist issued.'}`
+          + `${res ? ` ${res} beneficiary message${res > 1 ? 's' : ''} marked resolved.` : ''}`
+        : 'Rejected — nothing was committed.')
       setOpen(null); load()
     } catch (ex) { setErr(ex) } finally { setBusy(false) }
   }
@@ -121,7 +127,10 @@ export default function AgentActions() {
         </div>
       )}
 
-      {detail && <RunDetail run={detail} busy={busy} onClose={() => setOpen(null)} onDecide={decide} />}
+      {detail && <RunDetail run={detail} busy={busy} onClose={() => setOpen(null)}
+        onDecide={decide} onCreateSku={setCreatingSku} />}
+      {creatingSku && <ItemEditor item={creatingSku} onClose={() => setCreatingSku(null)}
+        onSaved={m => { setCreatingSku(null); setNote(m + ' The agent can order it on the next run.') }} />}
     </>
   )
 }
@@ -129,11 +138,20 @@ export default function AgentActions() {
 // The four panels the guardrail node emits. `adaptations` gets the most space
 // on purpose: it is the only place you can see the agent hit a wall and reason
 // its way around it, which is the difference between a workflow and an agent.
-function RunDetail({ run, busy, onClose, onDecide }) {
+function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const s = run.summary || {}
   const { sensed = {}, predicted = {}, queued = {}, adaptations = [], guardrails = {} } = s
   const pending = run.status === 'pending_approval'
   const legacy = s.approval_version !== 2
+
+  // Everything starts ticked — the agent's plan is the default, and the human
+  // subtracts from it rather than assembling it line by line.
+  const allIdx = (queued.steps || []).map((st, i) => st.index ?? i)
+  const [picked, setPicked] = useState(allIdx)
+  useEffect(() => { setPicked(allIdx) }, [run.thread_id, (queued.steps || []).length])
+  const selectedTotal = (queued.steps || [])
+    .filter((st, i) => picked.includes(st.index ?? i))
+    .reduce((t, st) => t + (st.value_sgd || 0), 0)
 
   return (
     <div className="modal-back" onClick={onClose}>
@@ -166,10 +184,15 @@ function RunDetail({ run, busy, onClose, onDecide }) {
               {n.gap && <> <Pill kind="danger">no stocked SKU</Pill></>}
             </li>
           ))}
-          {sensed.price_signal?.series && (
-            <li>{sensed.price_signal.series} prices {sensed.price_signal.direction}
-              {' '}({sensed.price_signal.pct_change_3m}% / 3mo) → <strong>{sensed.price_signal.recommendation}</strong>
-              <span className="muted"> · data lag {sensed.price_signal.data_lag_months}mo</span></li>
+          {(sensed.price_signals || []).map((p, i) => (
+            <li key={`p${i}`}>{p.series} prices {p.direction} ({p.pct_change_3m}% / 3mo)
+              {' '}→ <strong>{p.recommendation}</strong>
+              <span className="muted"> · {Math.round((p.confidence || 0) * 100)}% confidence
+                · data lag {p.data_lag_months}mo</span></li>
+          ))}
+          {(sensed.price_signals || []).length === 0 && (
+            <li className="muted">No actionable price signal — everything at risk was
+              NEUTRAL or has no forecast (perishables are excluded from the price model).</li>
           )}
           {(sensed.unavailable_services || []).length > 0 && (
             <li className="muted">Reasoned without: {sensed.unavailable_services.join(', ')}</li>
@@ -180,18 +203,53 @@ function RunDetail({ run, busy, onClose, onDecide }) {
         <p className="small" style={{ marginTop: 4 }}>{predicted.reasoning}</p>
 
         <h3>What it has queued</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Tick only the lines you want. Unticked lines are not ordered and do not
+          close the beneficiary messages behind them.
+        </p>
         {(queued.steps || []).length === 0 ? <p className="muted small">Nothing queued.</p> : (
-          <table><thead><tr><th>Action</th><th>Item</th><th className="num">Qty</th><th>Vendor</th></tr></thead>
-            <tbody>{queued.steps.map((st, i) => (
-              <tr key={i}>
-                <td>{st.action.replace(/_/g, ' ')}</td>
-                <td className="mono small">{st.sku}</td>
-                <td className="num">{st.qty || '—'}</td>
-                <td className="small">{st.vendor_id || '—'}</td>
-              </tr>))}
-            </tbody></table>
+          <table>
+            <thead><tr>
+              <th style={{ width: 34 }}></th><th>Action</th><th>Item</th>
+              <th className="num">Qty</th><th>Vendor</th><th className="num">Value</th>
+            </tr></thead>
+            <tbody>{queued.steps.map((st, i) => {
+              const idx = st.index ?? i
+              const on = picked.includes(idx)
+              return (
+                <tr key={idx} style={{ opacity: on ? 1 : .45 }}>
+                  <td><input type="checkbox" style={{ width: 18 }} checked={on}
+                    disabled={!pending}
+                    onChange={() => setPicked(on ? picked.filter(x => x !== idx)
+                                                 : [...picked, idx].sort((a, b) => a - b))} /></td>
+                  <td>{st.action.replace(/_/g, ' ')}</td>
+                  <td className="mono small">{st.sku}</td>
+                  <td className="num">{st.qty || '—'}</td>
+                  <td className="small">
+                    {st.action === 'flag_for_human'
+                      // A gap means nothing in the catalogue can serve this need.
+                      // Ticking it off changes nothing — the fix is to create the
+                      // SKU so the agent can order it next run.
+                      ? <button className="btn-sm btn-primary" type="button"
+                          onClick={() => onCreateSku({
+                            __prefill: true,
+                            sku: st.sku,
+                            name: (st.rationale || st.sku).slice(0, 60),
+                            category: 'UNCATEGORISED',
+                          })}>Create this SKU</button>
+                      : (st.vendor_id || '—')}
+                  </td>
+                  <td className="num">{st.value_sgd ? `S$${st.value_sgd.toFixed(2)}` : '—'}</td>
+                </tr>)
+            })}</tbody>
+          </table>
         )}
-        <p className="small" style={{ marginTop: 8 }}><strong>Total: S${queued.total_sgd ?? 0}</strong></p>
+        <p className="small" style={{ marginTop: 8 }}>
+          <strong>Selected: S${selectedTotal.toFixed(2)}</strong>
+          {selectedTotal !== (queued.total_sgd ?? 0) && (
+            <span className="muted"> of S${(queued.total_sgd ?? 0).toFixed(2)} queued</span>
+          )}
+        </p>
 
         <h3>Adaptations it had to make</h3>
         {adaptations.length === 0 ? (
@@ -223,10 +281,13 @@ function RunDetail({ run, busy, onClose, onDecide }) {
         {pending ? (
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
             <button className="btn-danger" disabled={busy}
-                    onClick={() => onDecide(run.thread_id, 'rejected')}>Reject</button>
-            <button className="btn-primary" disabled={busy || legacy || !!guardrails.halt_reason || guardrails.exceeds_monthly_budget}
-                    onClick={() => onDecide(run.thread_id, 'approved')}>
-              {busy ? 'Committing…' : run.charity_type === 'A' ? 'Approve — issue checklist' : `Approve — commit S$${queued.total_sgd ?? 0}`}
+                    onClick={() => onDecide(run.thread_id, 'rejected', [])}>
+              Reject all
+            </button>
+            <button className="btn-primary" disabled={busy || picked.length === 0}
+                    onClick={() => onDecide(run.thread_id, 'approved', picked)}>
+              {busy ? 'Committing…'
+                : `Approve ${picked.length} of ${allIdx.length} — S$${selectedTotal.toFixed(2)}`}
             </button>
           </div>
         ) : (

@@ -85,6 +85,56 @@ def get_unmet_needs() -> dict[str, Any]:
     return _get(settings.feedback_url, "/feedback/unmet-needs")
 
 
+def get_inbound_orders() -> dict[str, Any]:
+    """Open purchase orders per SKU — what is already on the way.
+
+    `on_hand` does not move until goods physically arrive, so without this a
+    SKU sits below its reorder point for the whole lead time and the agent
+    re-proposes the same restock on every run.
+    """
+    if settings.fake_inventory:
+        return {}
+    return _get(settings.inventory_url, "/orders/inbound")
+
+
+def resolve_feedback(skus: list[str], run_id: str, note: str = "") -> dict[str, Any]:
+    """Close the feedback rows an approved order actually addresses."""
+    if settings.fake_feedback or not skus:
+        return {"resolved": 0}
+    url = f"{settings.feedback_url.rstrip('/')}/feedback/resolve"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"skus": skus, "run_id": run_id, "note": note})
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as exc:
+        log.warning("could not resolve feedback: %s", exc)
+        return {"resolved": 0, "error": str(exc)}
+
+
+def get_price_forecasts(series_names: list[str]) -> dict[str, Any]:
+    """Forecast every series the at-risk SKUs actually map to.
+
+    `sense` used to request a single hardcoded "Rice", so the agent timed every
+    purchase against the rice curve no matter what was low. This asks for the
+    commodities that are genuinely at risk this run.
+
+    A series with no forecast is not an error: perishables were deliberately
+    excluded from the price model (you cannot stockpile fresh vegetables, so a
+    forecast on them is not actionable). Those come back as `unavailable`.
+    """
+    if settings.fake_pricing:
+        return fixtures.PRICE_FORECAST_ENVELOPE
+    out: dict[str, Any] = {}
+    unavailable: list[str] = []
+    for name in series_names:
+        try:
+            out[name] = get_price_forecast(name)
+        except Exception:                              # noqa: BLE001
+            unavailable.append(name)
+    return {"forecasts": out, "no_forecast_for": unavailable}
+
+
 def get_price_forecast(series: str = "Rice") -> dict[str, Any]:
     if settings.fake_pricing:
         return fixtures.PRICE_FORECAST
@@ -150,71 +200,46 @@ class VendorError(Exception):
             self.body["retry_after_seconds"] = retry_after_seconds
 
 
-
-def total_sgd(result: dict) -> Decimal:
-    """Normalize WS1 quotes and orders without a silent zero fallback."""
-    value = result.get("total_price_sgd", result.get("total_sgd"))
-    if value is None:
-        value = Decimal(str(result["qty"])) * Decimal(str(result["unit_price_sgd"]))
-    total = Decimal(str(value)).quantize(Decimal("0.01"))
-    if not total.is_finite() or total < 0:
-        raise ValueError("invalid order total")
-    return total
-
-
-def _retry_after(raw: str | None) -> float | None:
-    if raw is None:
-        return None
-    try:
-        seconds = float(raw)
-    except ValueError:
-        try:
-            seconds = (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds()
-        except (TypeError, ValueError, OverflowError):
-            return None
-    import math
-    return max(0, seconds) if math.isfinite(seconds) else None
-
-
-def _post(path: str, body: dict, key: str | None = None) -> dict:
-    url = f"{settings.inventory_url.rstrip('/')}{path}"
-    headers = service_headers()
-    if key:
-        headers["Idempotency-Key"] = key
-    # Quotes/validation are read-only. Committing calls are retried only with
-    # the same durable idempotency key, including after ambiguous timeouts.
-    retries = 3 if key or path.endswith(("/quote", "/validate")) else 1
-    for attempt in range(retries):
-        try:
-            with httpx.Client(timeout=settings.http_timeout) as c:
-                r = c.post(url, json=body, headers=headers)
-            if r.is_success:
-                try:
-                    result = r.json()
-                    if not isinstance(result, dict):
-                        raise ValueError("expected an object")
-                    return result
-                except ValueError as exc:
-                    raise ServiceError("inventory returned an invalid response") from exc
-            if 400 <= r.status_code < 500:
-                try:
-                    b = r.json()
-                except ValueError:
-                    b = {}
-                if not isinstance(b, dict):
-                    b = {}
-                raise VendorError(r.status_code, b.get("code", "UNKNOWN"),
-                                  b.get("message", r.text), b.get("alternatives", []),
-                                  b.get("remedy_hint", ""), _retry_after(r.headers.get("Retry-After")))
-            failure = f"inventory returned {r.status_code}"
-        except httpx.HTTPError as exc:
-            failure = f"{type(exc).__name__}: {exc}"
-        if attempt + 1 < retries:
-            time.sleep(0.25 * 2**attempt)
-    raise ServiceError(f"POST {url} failed: {failure}")
-
-
 def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
+    """Price a line WITHOUT committing it.
+
+    ACT used to call /vendor/{id}/order to "stage" a step — but that endpoint
+    really places the order. Every line was therefore committed before the human
+    saw the plan, which made the approval gate cosmetic: declining a line left
+    the order standing in the database.
+
+    /quote returns the same error codes and the same `alternatives` payload the
+    adapt loop reasons over, and creates nothing. Planning happens here; money
+    is spent only in COMMIT, and only for approved steps.
+    """
+    if settings.fake_inventory:
+        return _fake_vendor_call(vendor_id, sku, qty)
+
+    url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/quote"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"sku": sku, "qty": qty})
+    except httpx.HTTPError as exc:
+        raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
+
+    body: dict[str, Any] = {}
+    try:
+        body = r.json()
+    except ValueError:
+        pass
+    # This service reports domain refusals in the body with a `code`, whether or
+    # not the HTTP status is an error — treat either as a VendorError.
+    if body.get("code") or (400 <= r.status_code < 500):
+        raise VendorError(r.status_code, body.get("code", "UNKNOWN"),
+                          body.get("message", r.text),
+                          body.get("alternatives", []), body.get("remedy_hint", ""))
+    if not r.is_success:
+        raise ServiceError(f"quote {vendor_id} returned {r.status_code}")
+    return {"status": "QUOTED", **body}
+
+
+def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
+    """COMMIT an order. Real money. Only COMMIT calls this."""
     if settings.fake_inventory:
         return _fake_vendor_call(vendor_id, sku, qty)
     result = _post(f"/vendor/{quote(vendor_id, safe='')}/quote", {"sku": sku, "qty": qty})

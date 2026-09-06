@@ -204,6 +204,12 @@ class InventoryAlertResponse(APIModel):
     message: ShortText
     lot_id: Identifier | None = None
     expiry_date: date | None = None
+    # Open purchase orders for this SKU. A BELOW_REORDER flag is suppressed
+    # once inbound stock covers the shortfall — otherwise the same deficit is
+    # re-flagged for the whole lead time and the agent re-proposes the order it
+    # already placed.
+    qty_inbound: int = 0
+    covered_by_inbound: bool = False
     days_cover: NonNegativeFloat | None = None
 
 

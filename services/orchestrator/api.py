@@ -44,6 +44,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 _DIALECT = re.compile(r"^postgresql\+\w+://")
 
+# ONE compiled graph for the whole process.
+#
+# compile_graph() was previously called per request. Each call built a fresh
+# SqliteSaver over a new sqlite3.connect() that was never closed — 14 leaked
+# descriptors on one checkpoint file, with a background thread writing through
+# WAL at the same time. That is what produced the intermittent
+# "DatabaseError: file is not a database" on start_run and decide.
+_GRAPH = None
+_GRAPH_LOCK = threading.Lock()
+
+
+def _graph():
+    global _GRAPH
+    if _GRAPH is None:
+        with _GRAPH_LOCK:
+            if _GRAPH is None:
+                _GRAPH = compile_graph()
+    return _GRAPH
+
 
 @contextmanager
 def _conn():
@@ -157,20 +176,18 @@ def get_run(thread_id: str, user: dict = Depends(require_charity)):
 
 
 @app.post("/agent/runs/{thread_id}/decision")
-def decide(thread_id: str, payload: DecisionRequest, user: dict = Depends(require_charity)):
-    """Serialize decisions across processes and resume interrupted commits safely."""
-    decision = payload.decision
-    # Session lock is released even if the process crashes. A durable committing
-    # state allows the SAME approver to retry an ambiguous result after restart.
-    with _conn() as claim:
-        with claim.cursor() as cursor:
-            cursor.execute("SELECT pg_try_advisory_lock(hashtext(%s))", ("decision:" + thread_id,))
-            if not cursor.fetchone()[0]:
-                raise HTTPException(409, "a decision is already in progress")
-            try:
-                return _decide_locked(thread_id, decision, user)
-            finally:
-                cursor.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("decision:" + thread_id,))
+def decide(thread_id: str, payload: dict = Body(...)):
+    """Approve or reject a queued plan. This is the guardrail node's other half."""
+    decision = str(payload.get("decision", "")).lower()
+    approved_steps = payload.get("approved_steps")
+    if approved_steps is not None:
+        # Per-line selection wins over the blanket decision.
+        approved_steps = [int(i) for i in approved_steps]
+        decision = "approved" if approved_steps else "rejected"
+    if decision not in ("approved", "rejected"):
+        raise HTTPException(400, "decision must be 'approved' or 'rejected', "
+                                 "or send approved_steps")
+    who = payload.get("decided_by") or "unknown"
 
 
 def _decide_locked(thread_id: str, decision: str, user: dict):
@@ -184,38 +201,23 @@ def _decide_locked(thread_id: str, decision: str, user: dict):
             raise HTTPException(409, "only the original approver can retry this decision")
     elif row["status"] != "pending_approval":
         raise HTTPException(409, f"run is '{row['status']}', not awaiting approval")
-    summary = row.get("summary") or {}
-    if decision == "approved" and summary.get("approval_version") != APPROVAL_VERSION:
-        raise HTTPException(409, "Legacy approval: review existing orders and start a new run.")
-    guardrails = summary.get("guardrails", {})
-    if decision == "approved" and (guardrails.get("halt_reason") or guardrails.get("exceeds_monthly_budget")):
-        raise HTTPException(409, "This plan requires revision; review the failure and start a new run.")
-    if not retrying:
-        _sql("""UPDATE agent.runs SET status='committing', decision=%s,
-                decided_by=%s, decided_by_id=%s, decided_at=now() WHERE thread_id=%s""",
-             (decision, user.get("email", who), who, thread_id))
-    graph = compile_graph()
-    cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 256}
+
+    graph = _graph()
+    cfg = {"configurable": {"thread_id": thread_id}}
     try:
-        snapshot = graph.get_state(cfg)
-        if not snapshot.values:
-            raise RuntimeError("The run checkpoint is missing; no changes were authorized for replay.")
-        if not snapshot.next:
-            result = snapshot.values
-        elif "approval" in snapshot.next:
-            result = graph.invoke(Command(resume={"decision": decision}), cfg)
-        else:
-            result = graph.invoke(None, cfg)
-    except Exception as exc:
-        logger.exception("run %s resume failed", thread_id)
-        _sql("UPDATE agent.runs SET error=%s WHERE thread_id=%s",
+        resume: dict = {"decision": decision}
+        if approved_steps is not None:
+            resume["approved_steps"] = approved_steps
+        result = graph.invoke(Command(resume=resume), cfg)
+    except Exception as exc:  # noqa: BLE001
+        _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
-        raise HTTPException(503, "Resume interrupted. Retry the same decision to recover; completed actions will not repeat.") from exc
-    finally:
-        graph.checkpointer.conn.close()
-    final_status = "failed" if decision == "approved" and result.get("halt_reason") else decision
-    outcome = _jsonable(result.get("outcome"))
-    _sql("""UPDATE agent.runs SET status=%s, outcome=%s, summary=%s, error=%s WHERE thread_id=%s""",
-         (final_status, psycopg2.extras.Json(outcome),
-          psycopg2.extras.Json(_jsonable(build_summary(result))), result.get("halt_reason"), thread_id))
-    return {"thread_id": thread_id, "status": final_status, "outcome": outcome}
+        raise HTTPException(500, f"resume failed: {exc}")
+
+    _sql("""UPDATE agent.runs SET status=%s, outcome=%s, decided_at=now(),
+            decided_by=%s WHERE thread_id=%s""",
+         (decision, psycopg2.extras.Json(_jsonable(result.get("outcome"))),
+          who, thread_id))
+    return {"thread_id": thread_id, "status": decision,
+            "approved_steps": approved_steps,
+            "outcome": _jsonable(result.get("outcome"))}

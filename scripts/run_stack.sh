@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the whole local stack.
-#   auth 8001 · inventory 8000 · feedback 8002 · forecaster 8004 · orchestrator 8003
-#   frontend (Vite) 5173
+#   auth 8004 · inventory 8000 · feedback 8002 · forecaster 8003 · orchestrator 8005
+#   frontend (Vite) 5174
 # Native Postgres, not Docker — this machine has no Docker runtime.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,16 +45,16 @@ api forecaster   services/price_forecaster app:app             8004
 api orchestrator services                  orchestrator.api:app 8003
 
 if [ "${1:-}" = "--with-frontend" ]; then
-  if lsof -nP -iTCP:5173 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "  frontend     already up on :5173"
+  if lsof -nP -iTCP:5174 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "  frontend     already up on :5174"
   else
     ( cd "$ROOT/frontend/app" && nohup npm run dev > /tmp/frontend.log 2>&1 & )
     for _ in $(seq 1 60); do
-      curl -sf -m 1 "http://localhost:5173" >/dev/null 2>&1 && break
+      curl -sf -m 1 "http://localhost:5174" >/dev/null 2>&1 && break
       /usr/bin/python3 -c "import time;time.sleep(0.5)"
     done
-    echo "  frontend     up on :5173"
+    echo "  frontend     up on :5174"
   fi
   echo
-  echo "  Open http://localhost:5173"
+  echo "  Open http://localhost:5174"
 fi

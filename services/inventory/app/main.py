@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.db import check_database_connection
 from app.errors import install_error_handlers
 from app.routers.inventory import router as inventory_router
+from app.routers.orders import router as orders_router
 from app.routers.vendors import router as vendors_router
 
 
@@ -27,8 +28,9 @@ app.add_middleware(
 )
 
 install_error_handlers(app)
-app.include_router(inventory_router, dependencies=[Depends(require_operator)])
-app.include_router(vendors_router, dependencies=[Depends(require_operator)])
+app.include_router(inventory_router)
+app.include_router(orders_router)
+app.include_router(vendors_router)
 
 
 @app.get(

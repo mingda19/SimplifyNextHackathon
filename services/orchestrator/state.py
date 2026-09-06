@@ -82,6 +82,7 @@ class AgentState(TypedDict, total=False):
 
     # PHASE 4
     approval: Literal["pending", "approved", "rejected"] | None
+    approved_steps: list[int] | None        # step indexes the human approved
     outcome: dict[str, Any] | None
 
     # ops
@@ -103,6 +104,7 @@ def new_state(thread_id: str, charity_type: str = "B") -> AgentState:
         attempts=[],
         staged=[],
         approval=None,
+        approved_steps=None,
         outcome=None,
         token_ledger={},
         halt_reason=None,
