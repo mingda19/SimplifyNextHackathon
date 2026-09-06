@@ -39,6 +39,7 @@ from app.skus import (
     NUT_FREE,
     SOFT_TEXTURE,
     MSG_FREE,
+    LOW_FAT,
 )
 
 FUZZY_ACCEPT_THRESHOLD = 0.72
@@ -85,8 +86,39 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
         # (it's the alias that's a substring of THIS, the other way around),
         # so it's safe to add without a new containment collision.
         "சர்க்கரை நோய்",  # Tamil: diabetes ("sugar disease")
+        # Phase 5d: beneficiaries state a condition, not a dietary tag. Each
+        # checked for ALIASES containment first (per the 5a failure class);
+        # "sugar level high"/"sakit gula"/"糖尿病" DO contain a bare sugar
+        # alias ("sugar"/"gula"/"糖"), but that's safe here specifically:
+        # SUGAR-1KG carries no sugar_free qualifier (verified), so the guard
+        # correctly refuses that same match instead of silently accepting
+        # it -- the same self-correcting pattern as the சர்க்கரை நோய் fix
+        # above, not a new collision.
+        "diabetes", "sugar level high",
+        "kencing manis", "sakit gula",  # Malay
+        "糖尿病",  # Mandarin: diabetes -- UNVERIFIED, flagged for native-speaker review
+        "நீரிழிவு",  # Tamil: diabetes (the direct medical term, distinct from
+                     # சர்க்கரை நோய்'s "sugar disease" phrasing above)
     ],
-    LOW_SODIUM: ["low sodium", "low-sodium", "less salt", "no salt"],
+    LOW_SODIUM: [
+        "low sodium", "low-sodium", "less salt", "no salt",
+        # Phase 5d. "cannot eat salty" contains the bare "salt" alias, but
+        # self-corrects the same way (SALT-500G carries no low_sodium
+        # qualifier, verified) -- see the SUGAR_FREE note above.
+        # "buah pinggang" (Malay: kidney, literally "kidney fruit") is
+        # deliberately NOT included -- it contains "buah" (fruit), an
+        # unrelated alias to FRUIT-CANNED-825G, and unlike the sugar/salt
+        # cases above, canned fruit has nothing to do with kidney problems,
+        # so this one WOULD wrongly block a legitimate fruit request instead
+        # of self-correcting. No safe phrasing exists for this concept in
+        # Malay without the same collision, since "buah pinggang" is the
+        # standard compound term.
+        "high blood pressure", "hypertension", "cannot eat salty",
+        "kidney problem", "dialysis",
+        "darah tinggi", "tekanan darah tinggi", "hipertensi",  # Malay
+        "高血压", "肾病",  # Mandarin -- UNVERIFIED, flagged for native-speaker review
+        "ரத்த அழுத்தம்", "இரத்த அழுத்தம்",  # Tamil: blood pressure
+    ],
     LACTOSE_FREE: ["lactose free", "lactose-free", "dairy free", "no dairy"],
     VEGETARIAN: ["vegetarian", "no meat", "veg only"],
     NUT_FREE: ["nut free", "nut-free", "no nuts", "peanut allergy"],
@@ -105,6 +137,15 @@ QUALIFIER_PATTERNS: dict[str, list[str]] = {
         "too hard",
     ],
     MSG_FREE: ["no msg", "msg free", "msg-free", "without msg"],
+    # Phase 5d: new tag. No SKU carries low_fat yet (see skus.py) -- any
+    # match on this always refuses, same as MSG_FREE. "cannot eat oily"
+    # contains the bare "oil" alias but self-corrects: OIL-2L carries no
+    # low_fat qualifier (verified), same pattern as the sugar/salt cases.
+    LOW_FAT: [
+        "cholesterol", "high cholesterol", "cannot eat oily", "fatty food",
+        "kolesterol tinggi",  # Malay
+        "胆固醇",  # Mandarin: cholesterol -- UNVERIFIED, flagged for native-speaker review
+    ],
 }
 
 _SKU_CODE_RE = re.compile(r"\b[A-Z]{2,}-[A-Z0-9]+\b")

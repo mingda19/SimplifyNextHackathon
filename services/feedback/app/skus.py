@@ -43,10 +43,16 @@ MSG_FREE = "msg_free"
 # Without this, "adult diapers" matched the infant SKU — a false match, which
 # the matcher's whole guard exists to prevent.
 ADULT_SIZED = "adult_sized"
+# Phase 5d: detection-side only. No SKU in QUALIFIER_OVERLAY carries this yet
+# (the inventory API has no fat-content data), so any match on this tag
+# always refuses -- same as MSG_FREE. That's correct: it converts a
+# cholesterol/fatty-food mention into a real near-miss + unmet-needs signal
+# instead of a silent (and unverifiable) claim that some SKU is low-fat.
+LOW_FAT = "low_fat"
 
 ALL_QUALIFIERS = {
     GLUTEN_FREE, HALAL, SUGAR_FREE, LOW_SODIUM, LACTOSE_FREE,
-    VEGETARIAN, NUT_FREE, SOFT_TEXTURE, MSG_FREE, ADULT_SIZED,
+    VEGETARIAN, NUT_FREE, SOFT_TEXTURE, MSG_FREE, ADULT_SIZED, LOW_FAT,
 }
 
 # Dietary/texture flags the inventory API does not model. Keyed on REAL SKUs.

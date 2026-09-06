@@ -207,6 +207,46 @@ GOLDEN_CASES = [
     # false positive.
     ("generic 'drink' (singular) -> water via fuzzy against 'drinks', not its own alias",
      "drink", "WATER-1-5L", None, None),
+    # --- Phase 5d: health-condition vocabulary, detection side only.
+    # Beneficiaries state a condition, not a dietary tag -- these prove the
+    # guard now catches that against an UNRELATED item (not just the
+    # self-correcting sugar/salt/oil collisions), across English, Malay, and
+    # Tamil, plus the new LOW_FAT tag. ---
+    (
+        "'diabetes' (English) blocks an unrelated item -> refuse, not NOODLES-1KG",
+        "diabetes need noodles",
+        None,
+        "NOODLES-1KG",
+        "sugar_free",
+    ),
+    (
+        "'high blood pressure' (English) -> refuse, not NOODLES-1KG",
+        "high blood pressure need noodles",
+        None,
+        "NOODLES-1KG",
+        "low_sodium",
+    ),
+    (
+        "'darah tinggi' (Malay: hypertension) -> refuse, not RICE-5KG",
+        "darah tinggi perlukan beras",
+        None,
+        "RICE-5KG",
+        "low_sodium",
+    ),
+    (
+        "'நீரிழிவு' (Tamil: diabetes) -> refuse, not RICE-5KG",
+        "நீரிழிவு அரிசி வேண்டும்",
+        None,
+        "RICE-5KG",
+        "sugar_free",
+    ),
+    (
+        "'cholesterol' (new LOW_FAT tag) -> refuse, not OIL-2L",
+        "high cholesterol need cooking oil",
+        None,
+        "OIL-2L",
+        "low_fat",
+    ),
 ]
 
 
