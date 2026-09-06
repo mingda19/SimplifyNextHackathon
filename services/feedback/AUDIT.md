@@ -51,7 +51,17 @@ With that fixed, confirmed empirically against the live container (`scripts/smok
 - No 5xx on empty/huge/emoji-only input; rapid duplicate submissions create independent rows
 - `Extraction`'s Pydantic schema genuinely rejects an out-of-vocabulary enum at construction time
 
-**p50/p95 latency (FAKE_LLM=1, DB+API round-trip only, 5-entry sample):** p50 ≈ 219ms, p95 ≈ 312ms. This is *not* real extraction latency — under `FAKE_LLM=1` every entry short-circuits to a canned response, so this only measures the DB/API path. Real Bedrock-call latency is still pending: AWS CLI was not installed on the dev machine and had to be installed mid-session, and the AWS SSO login (`aws sso login --sso-session hackathon`) has not yet been completed. `scripts/check_bedrock.py` (Part A) and the real-Bedrock half of `smoke_real.py`/`adversarial.py` (Part C's bad-enum-retry case) remain unverified until that login happens.
+**p50/p95 latency (FAKE_LLM=1, DB+API round-trip only, 5-entry sample):** p50 ≈ 219ms, p95 ≈ 312ms. This was *not* real extraction latency — under `FAKE_LLM=1` every entry short-circuits to a canned response, so it only measured the DB/API path.
+
+### Phase 6 update: real Bedrock extraction latency, measured
+
+The SCP/model-id blocker from Phase 2 is resolved (legacy `AnthropicBedrock` client + inference-profile model id, per the groupmate's fix). Measured against 40 real extractions (`eval/test.json` rows 150-192, `--concurrency 4` via `scripts/load_corpus.py`):
+
+**p50 = 1.78s, p95 = 3.57s, min = 1.47s, max = 8.63s, mean = 2.26s.**
+
+This is the number to plan demo pacing around — a beneficiary submission takes low-single-digit seconds to finish extracting, not the sub-second DB-only figure above.
+
+Two of 42 rows (4.8%) in this same batch failed outright with `[WinError 5] Access is denied` on `~/.aws/sso/cache/*.tmp -> *.json` — a Windows-specific file-system race in `botocore`'s SSO token cache when multiple concurrent requests try to refresh/rename it at the same time (POSIX's atomic rename tolerates this; Windows doesn't). The two slowest successful rows in the batch (8.4s, 8.6s — both `schema_valid_first_try=true`, so not a validation retry) sit immediately adjacent to the two failures by row ID, consistent with the same contention causing delay rather than failure in those cases. This is third-party-library behavior under concurrent load on Windows specifically, not something to patch in this repo; noted here rather than fixed. If running a real (not `FAKE_LLM=1`) batch load on Windows, lower `--concurrency` (e.g. to 1-2) to avoid it entirely — a single beneficiary submitting live during a demo won't hit this at all, since there's no concurrent contention with only one request in flight.
 
 Also fixed along the way (found while writing `smoke_real.py`, a client-side issue not a service bug): Windows resolves `localhost` to IPv6 first, and the connection attempt times out before falling back to IPv4 — costs ~2 seconds per request on this machine. Both scripts default to `127.0.0.1` instead. Worth knowing if anyone else demos from a Windows laptop and sees mysteriously slow requests against `localhost` URLs.
 
