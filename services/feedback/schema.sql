@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS feedback.feedback_entries (
     extraction_error        TEXT,
     extracted_at            TIMESTAMPTZ,
 
+     resolved_at             TIMESTAMPTZ,
+
     -- extraction contract fields (frozen -- field names are load-bearing, M's
     -- queries depend on them)
     sentiment                TEXT CHECK (sentiment IN ('negative', 'neutral', 'positive')),

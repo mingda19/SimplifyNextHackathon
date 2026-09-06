@@ -9,13 +9,11 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from decimal import Decimal
 
 from langgraph.types import interrupt
 
 from ..config import BASELINES
-from ..state import APPROVAL_VERSION, AgentState, Plan
-from ..services import total_sgd
+from ..state import AgentState, Plan
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +70,6 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         return out
 
     return {
-        "approval_version": state.get("approval_version"),
         "sensed": {
             "as_of": sow.get("as_of"),
             "below_reorder": (sow.get("alerts") or {}).get("below_reorder", []),
@@ -100,7 +97,7 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         "queued": {
             "steps": _steps_with_value(plan, staged),
             "staged": staged,
-            "total_sgd": float(total),
+            "total_sgd": round(total, 2),
         },
         # The panel that matters. Give it the most space in the UI.
         "adaptations": [
@@ -110,14 +107,9 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         ],
         "guardrails": {
             "baselines": BASELINES,
-            "exceeds_single_order_cap": state.get("charity_type", "B") == "B" and any(
-                t > BASELINES["max_single_order_sgd"] for t in order_totals),
-            "exceeds_monthly_budget": total > BASELINES["monthly_budget_sgd"],
-            "halt_reason": state.get("halt_reason") or (
-                "This run predates the approval fix. Review existing orders and start a new run."
-                if state.get("approval_version") != APPROVAL_VERSION else None),
+            "exceeds_single_order_cap": total > BASELINES["max_single_order_sgd"],
+            "halt_reason": state.get("halt_reason"),
         },
-        "trace": attempts,
     }
 
 
@@ -144,8 +136,6 @@ def approval(state: AgentState) -> dict[str, Any]:
     else:
         verdict = str(decision or "rejected").strip().lower()
     verdict = verdict if verdict in {"approved", "rejected"} else "rejected"
-    if verdict == "approved" and (summary["guardrails"]["halt_reason"] or summary["guardrails"]["exceeds_monthly_budget"]):
-        return {"approval": "rejected", "halt_reason": summary["guardrails"]["halt_reason"] or "Monthly budget exceeded."}
 
     n_steps = len(Plan.model_validate(state["plan"]).steps) if state.get("plan") else 0
     if verdict == "approved" and approved_steps is None:

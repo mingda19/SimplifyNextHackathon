@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pantry_common.security import require_operator
 
 from app import __version__

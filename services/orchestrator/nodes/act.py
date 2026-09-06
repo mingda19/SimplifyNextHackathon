@@ -50,7 +50,8 @@ def act(state: AgentState) -> dict[str, Any]:
         }
 
     # -- backend actions ---------------------------------------------------
-    try:
+    try:# Add this near the top of act.py
+        COMMITTING_ACTIONS = {"place_order", "allocate", "update_inventory"}
         if action in COMMITTING_ACTIONS or action == "request_quote":
             # QUOTE, never order. Nothing here may spend money — COMMIT does
             # that, after a human has ticked the line.

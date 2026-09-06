@@ -22,6 +22,7 @@ export default function AgentActions() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [creatingSku, setCreatingSku] = useState(null)
+  const [charityType, setCharityType] = useState('B')
 
   const load = () => api.runs().then(r => { setRuns(r); setErr(null) }).catch(setErr)
   useEffect(() => {

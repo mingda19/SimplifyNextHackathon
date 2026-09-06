@@ -8,13 +8,6 @@ some point on 5 Sep, and the graph must keep reasoning without it.
 from __future__ import annotations
 
 import logging
-import time
-from datetime import datetime, timezone
-from decimal import Decimal
-from email.utils import parsedate_to_datetime
-from urllib.parse import quote
-
-from pantry_common.security import service_headers
 from typing import Any
 
 import httpx
@@ -33,7 +26,7 @@ def _get(base: str, path: str) -> Any:
     url = f"{base.rstrip('/')}{path}"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.get(url, headers=service_headers())
+            r = c.get(url)
             r.raise_for_status()
             return r.json()
     except httpx.HTTPError as exc:
@@ -139,7 +132,7 @@ def get_price_forecast(series: str = "Rice") -> dict[str, Any]:
     if settings.fake_pricing:
         return fixtures.PRICE_FORECAST
     return _get(settings.pricing_url,
-                f"/price/forecast?series={quote(series)}&horizon_months=3")
+                f"/price/forecast?series={series}&horizon_months=3")
 
 
 # ---------------------------------------------------------------- writers ---
@@ -190,14 +183,11 @@ class VendorError(Exception):
 
     def __init__(self, status: int, code: str, message: str,
                  alternatives: list[dict[str, Any]],
-                 remedy_hint: str = "", retry_after_seconds: float | None = None) -> None:
+                 remedy_hint: str = "") -> None:
         super().__init__(message)
         self.status = status
-        self.retry_after_seconds = retry_after_seconds
         self.body = {"code": code, "message": message,
                      "remedy_hint": remedy_hint, "alternatives": alternatives}
-        if retry_after_seconds is not None:
-            self.body["retry_after_seconds"] = retry_after_seconds
 
 
 def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
@@ -242,28 +232,23 @@ def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     """COMMIT an order. Real money. Only COMMIT calls this."""
     if settings.fake_inventory:
         return _fake_vendor_call(vendor_id, sku, qty)
-    result = _post(f"/vendor/{quote(vendor_id, safe='')}/quote", {"sku": sku, "qty": qty})
-    return {**result, "total_sgd": float(total_sgd(result))}
 
-
-def vendor_order(vendor_id: str, sku: str, qty: int, *,
-                 idempotency_key: str | None = None,
-                 expected_unit_price_sgd: float | None = None) -> dict[str, Any]:
-    """Commit an approved order. Never call this during staging."""
-    if settings.fake_inventory:
-        return {**_fake_vendor_call(vendor_id, sku, qty), "status": "PLACED",
-                "order_id": f"FAKE-{idempotency_key}"}
-    body = {"sku": sku, "qty": qty}
-    if expected_unit_price_sgd is not None:
-        body["expected_unit_price_sgd"] = expected_unit_price_sgd
-    result = _post(f"/vendor/{quote(vendor_id, safe='')}/order", body, idempotency_key)
-    return {**result, "total_sgd": float(total_sgd(result))}
-
-
-def allocate_lot(sku: str, lot_id: str, qty: int, *, validate_only: bool = False,
-                 idempotency_key: str | None = None) -> dict[str, Any]:
-    if settings.fake_inventory:
-        return {"sku": sku, "lot_id": lot_id, "qty": qty}
-    suffix = "/validate" if validate_only else ""
-    return _post(f"/inventory/{quote(sku, safe='')}/allocate{suffix}",
-                 {"lot_id": lot_id, "qty": qty}, idempotency_key)
+    url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/order"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"sku": sku, "qty": qty})
+    except httpx.HTTPError as exc:
+        # A transport failure is not a vendor decision. Surface it as a
+        # ServiceError so `act` routes to `adapt` instead of the graph dying.
+        raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
+    if r.is_success:
+        return r.json()
+    if 400 <= r.status_code < 500:
+        try:
+            b = r.json()
+        except ValueError:
+            b = {}
+        raise VendorError(r.status_code, b.get("code", "UNKNOWN"),
+                          b.get("message", r.text),
+                          b.get("alternatives", []), b.get("remedy_hint", ""))
+    raise ServiceError(f"vendor {vendor_id} returned {r.status_code}")

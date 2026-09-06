@@ -50,19 +50,13 @@ function DashboardPage() {
           <p className="text-sm text-muted-foreground mb-4">
             Create access links for recipients.
           </p>
-          <Button size="sm">Manage Links</Button>
+          <Link to="/links">
+            <Button size="sm" className="w-full">
+              Manage Links
+            </Button>
+          </Link>
         </div>
-        <div className="p-6 border rounded-xl bg-card text-card-foreground shadow-sm">
-          <h3 className="font-semibold leading-none tracking-tight mb-2">
-            Recipients
-          </h3>
-          <p className="text-sm text-muted-foreground mb-4">
-            View your registered beneficiaries.
-          </p>
-          <Button size="sm" variant="secondary">
-            View Recipients
-          </Button>
-        </div>
+       
         <div className="p-6 border rounded-xl bg-card text-card-foreground shadow-sm flex flex-col justify-between">
           <div>
             <h3 className="font-semibold leading-none tracking-tight mb-2">
