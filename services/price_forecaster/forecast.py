@@ -23,6 +23,7 @@ than take the estimate on faith.
 from __future__ import annotations
 
 import os
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -77,15 +78,101 @@ def _state() -> dict[str, Any]:
     return _cache
 
 
+_STOP = {"and", "or", "of", "the", "n", "e", "s", "nes", "excl", "incl"}
+
+
+def _norm(text: str) -> str:
+    """Fold the spelling differences between the two systems into one form.
+
+    Workstream 1 stores `dspi_series` in SingStat title case with words spelled
+    out — "Vegetables, Roots And Tubers, Prepared Or Preserved, N.E.S." — while
+    this service's catalogue keeps the DSPI raw form with ampersands and "Nes".
+    Exact and substring matching resolved 1 of 29 real SKUs because of it.
+    """
+    t = text.lower().replace("&", " and ")
+    return " ".join(re.findall(r"[a-z0-9]+", t))
+
+
+def _tokens(text: str) -> set[str]:
+    return {w for w in _norm(text).split() if w not in _STOP and len(w) > 2}
+
+
+def _full_name_map() -> dict[str, str]:
+    """full DSPI series name -> our alias.
+
+    The served matrix uses short aliases ("cereal_prep"), so token-matching a
+    ten-word SingStat title against a two-word alias never scores. The original
+    names live in data/dspi_features.SELECTED; matching against those is what
+    makes workstream 1's `dspi_series` resolvable at all.
+    """
+    if "fullmap" not in _cache:
+        try:
+            import sys
+            sys.path.insert(0, str(REPO_ROOT / "data"))
+            from dspi_features import SELECTED  # noqa: PLC0415
+            _cache["fullmap"] = dict(SELECTED)
+        except Exception:                          # noqa: BLE001
+            _cache["fullmap"] = {}
+    return _cache["fullmap"]
+
+
 def _resolve(series: str) -> str | None:
-    """Accept an alias ('rice'), the DSPI name, or any case variant."""
+    """Accept an alias ('rice'), either spelling of the DSPI name, or a variant."""
     cols = list(_state()["matrix"].columns)
-    lower = {c.lower(): c for c in cols}
     key = series.strip().lower()
+
+    # 0 match against the FULL DSPI names, normalised
+    full = _full_name_map()
+    nk0 = _norm(series)
+    for full_name, alias in full.items():
+        if _norm(full_name) == nk0 and alias in cols:
+            return alias
+    scored0 = []
+    for full_name, alias in full.items():
+        if alias not in cols:
+            continue
+        a, b = _tokens(series), _tokens(full_name)
+        if a and b:
+            scored0.append((len(a & b) / len(a | b), alias))
+    scored0.sort(reverse=True)
+    if scored0 and scored0[0][0] >= 0.55 and (
+            len(scored0) == 1 or scored0[0][0] - scored0[1][0] >= 0.10):
+        return scored0[0][1]
+
+    # 1 exact alias / column name
+    lower = {c.lower(): c for c in cols}
     if key in lower:
         return lower[key]
-    hits = [c for c in cols if key in c.lower()]
-    return hits[0] if len(hits) == 1 else None
+
+    # 2 normalised exact (handles "And" vs "&", "N.E.S." vs "Nes", punctuation)
+    nmap = {_norm(c): c for c in cols}
+    nk = _norm(series)
+    if nk in nmap:
+        return nmap[nk]
+
+    # 3 unambiguous substring, either direction
+    hits = [c for c in cols if nk and (nk in _norm(c) or _norm(c) in nk)]
+    if len(hits) == 1:
+        return hits[0]
+
+    # 4 best token overlap, but only when it is a clear winner. A weak match is
+    #   worse than none: the agent would time a purchase against another
+    #   commodity's price curve entirely.
+    want = _tokens(series)
+    if not want:
+        return None
+    scored = []
+    for c in cols:
+        have = _tokens(c)
+        if not have:
+            continue
+        j = len(want & have) / len(want | have)
+        scored.append((j, c))
+    scored.sort(reverse=True)
+    if scored and scored[0][0] >= 0.34 and (
+            len(scored) == 1 or scored[0][0] - scored[1][0] >= 0.08):
+        return scored[0][1]
+    return None
 
 
 def available_series() -> list[str]:

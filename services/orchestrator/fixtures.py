@@ -66,6 +66,13 @@ UNMET_NEEDS: dict[str, Any] = {
 # --------------------------------------------------------------------------
 # Workstream 3 — price forecast
 # --------------------------------------------------------------------------
+# SENSE now asks for a forecast per at-risk commodity, so the fake mirrors that
+# envelope: {"forecasts": {series: {...}}, "no_forecast_for": [...]}.
+PRICE_FORECAST_ENVELOPE: dict[str, Any] = {
+    "forecasts": {},          # filled at the bottom of this file
+    "no_forecast_for": ["Vegetables, Fresh, Chilled, Frozen Or Simply Preserved"],
+}
+
 PRICE_FORECAST: dict[str, Any] = {
     "series": "Rice",
     "as_of": "2026-06",
@@ -153,3 +160,6 @@ def fake_adaptation(step: dict[str, Any], error: dict[str, Any]) -> dict[str, An
     return {"revised_step": revised,
             "what_changed": f"Unrecognised error {code!r}; retrying unchanged.",
             "confidence": 0.30}
+
+
+PRICE_FORECAST_ENVELOPE["forecasts"]["Rice"] = PRICE_FORECAST

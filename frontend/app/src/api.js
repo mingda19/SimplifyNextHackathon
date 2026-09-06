@@ -58,6 +58,10 @@ export const api = {
   deleteStock: sku => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`, { method: 'DELETE' }),
   allocate: (sku, b) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}/allocate`, { method: 'POST', body: b }),
   alerts: () => request('/api/inventory/inventory/alerts'),
+  orders: status => request(`/api/inventory/orders${status ? '?status=' + status : ''}`),
+  inbound: () => request('/api/inventory/orders/inbound'),
+  receiveOrder: (id, body) => request(`/api/inventory/orders/${id}/receive`, { method: 'POST', body: body || {} }),
+  cancelOrder: id => request(`/api/inventory/orders/${id}/cancel`, { method: 'POST', body: {} }),
 
   // --- feedback -----------------------------------------------------------
   submitFeedback: b => request('/api/feedback/feedback', { method: 'POST', body: b, auth: false }),
@@ -70,6 +74,12 @@ export const api = {
   forecastAll: () => request('/api/pricing/price/forecast/all', { auth: false }),
 
   // --- agent --------------------------------------------------------------
+  decide: (id, decision, by, approved_steps) => request(`/api/agent/agent/runs/${id}/decision`, {
+    method: 'POST',
+    body: approved_steps === undefined
+      ? { decision, decided_by: by }
+      : { decision, decided_by: by, approved_steps },
+  }),
   runs: status => request(`/api/agent/agent/runs${status ? '?status=' + status : ''}`),
   run: id => request(`/api/agent/agent/runs/${id}`),
   startRun: charity_type => request('/api/agent/agent/runs', { method: 'POST', body: { charity_type } }),

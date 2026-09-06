@@ -42,6 +42,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 _DIALECT = re.compile(r"^postgresql\+\w+://")
 
+# ONE compiled graph for the whole process.
+#
+# compile_graph() was previously called per request. Each call built a fresh
+# SqliteSaver over a new sqlite3.connect() that was never closed — 14 leaked
+# descriptors on one checkpoint file, with a background thread writing through
+# WAL at the same time. That is what produced the intermittent
+# "DatabaseError: file is not a database" on start_run and decide.
+_GRAPH = None
+_GRAPH_LOCK = threading.Lock()
+
+
+def _graph():
+    global _GRAPH
+    if _GRAPH is None:
+        with _GRAPH_LOCK:
+            if _GRAPH is None:
+                _GRAPH = compile_graph()
+    return _GRAPH
+
 
 def _conn():
     dsn = _DIALECT.sub("postgresql://", os.getenv("DATABASE_URL", ""))
@@ -66,7 +85,7 @@ def _jsonable(x: Any) -> Any:
 def _run_graph(thread_id: str, charity_type: str) -> None:
     """Execute until the approval interrupt, then park the summary."""
     try:
-        graph = compile_graph()
+        graph = _graph()
         cfg = {"configurable": {"thread_id": thread_id}}
         result = graph.invoke(new_state(thread_id, charity_type), cfg)
         if "__interrupt__" in result:
@@ -135,8 +154,14 @@ def get_run(thread_id: str):
 def decide(thread_id: str, payload: dict = Body(...)):
     """Approve or reject a queued plan. This is the guardrail node's other half."""
     decision = str(payload.get("decision", "")).lower()
+    approved_steps = payload.get("approved_steps")
+    if approved_steps is not None:
+        # Per-line selection wins over the blanket decision.
+        approved_steps = [int(i) for i in approved_steps]
+        decision = "approved" if approved_steps else "rejected"
     if decision not in ("approved", "rejected"):
-        raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+        raise HTTPException(400, "decision must be 'approved' or 'rejected', "
+                                 "or send approved_steps")
     who = payload.get("decided_by") or "unknown"
 
     row = _sql("SELECT status FROM agent.runs WHERE thread_id=%s",
@@ -146,10 +171,13 @@ def decide(thread_id: str, payload: dict = Body(...)):
     if row["status"] != "pending_approval":
         raise HTTPException(409, f"run is '{row['status']}', not awaiting approval")
 
-    graph = compile_graph()
+    graph = _graph()
     cfg = {"configurable": {"thread_id": thread_id}}
     try:
-        result = graph.invoke(Command(resume={"decision": decision}), cfg)
+        resume: dict = {"decision": decision}
+        if approved_steps is not None:
+            resume["approved_steps"] = approved_steps
+        result = graph.invoke(Command(resume=resume), cfg)
     except Exception as exc:  # noqa: BLE001
         _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
@@ -160,4 +188,5 @@ def decide(thread_id: str, payload: dict = Body(...)):
          (decision, psycopg2.extras.Json(_jsonable(result.get("outcome"))),
           who, thread_id))
     return {"thread_id": thread_id, "status": decision,
+            "approved_steps": approved_steps,
             "outcome": _jsonable(result.get("outcome"))}

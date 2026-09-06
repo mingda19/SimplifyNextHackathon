@@ -8,13 +8,16 @@ export default function Shell() {
   const { user, logout } = useAuth()
   const nav = useNavigate()
   const [pending, setPending] = useState(0)
+  const [openOrders, setOpenOrders] = useState(0)
 
   // The pending-approval count is the one number a charity needs at a glance:
   // it is work the agent has queued and cannot do without a human.
   useEffect(() => {
     let alive = true
-    const poll = () => api.runs('pending_approval')
-      .then(r => alive && setPending(r.length)).catch(() => {})
+    const poll = () => {
+      api.runs('pending_approval').then(r => alive && setPending(r.length)).catch(() => {})
+      api.orders('PLACED').then(r => alive && setOpenOrders(r.length)).catch(() => {})
+    }
     poll()
     const id = setInterval(poll, 8000)
     return () => { alive = false; clearInterval(id) }
@@ -26,6 +29,10 @@ export default function Shell() {
       <nav className="side">
         <div className="brand">Pantry<span>.</span></div>
         <NavLink to="/stock" className={link}>Stock</NavLink>
+        <NavLink to="/orders" className={link}>
+          Incoming orders
+          {openOrders > 0 && <Pill kind="ok">{openOrders}</Pill>}
+        </NavLink>
         <NavLink to="/agent" className={link}>
           Agent actions
           {pending > 0 && <Pill kind="warn">{pending}</Pill>}

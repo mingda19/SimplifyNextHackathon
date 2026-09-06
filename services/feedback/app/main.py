@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import Json
 from pydantic import BaseModel
@@ -213,6 +213,58 @@ def health():
                 "fake_llm": settings.fake_llm, "model": settings.model_extract}
     except Exception as exc:  # noqa: BLE001
         return {"status": "degraded", "detail": str(exc)}
+
+
+class ResolveIn(BaseModel):
+    skus: Optional[list[str]] = None
+    feedback_ids: Optional[list[int]] = None
+    run_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+@app.post("/feedback/resolve")
+def resolve_feedback(payload: ResolveIn):
+    """Mark feedback as addressed so it stops being re-proposed.
+
+    Called by the orchestrator's COMMIT node with the SKUs an approved plan
+    actually ordered. Only rows whose `mentioned_skus` overlap those SKUs are
+    closed — a message asking for rice AND diapers is not resolved by an order
+    that only covers rice.
+    """
+    if not payload.skus and not payload.feedback_ids:
+        raise HTTPException(400, "give skus or feedback_ids")
+
+    clauses, params = [], []
+    if payload.feedback_ids:
+        clauses.append("id = ANY(%s)")
+        params.append(payload.feedback_ids)
+    if payload.skus:
+        clauses.append("mentioned_skus && %s")
+        params.append(payload.skus)
+
+    with db.get_cursor() as cur:
+        cur.execute(
+            f"""UPDATE feedback.feedback_entries
+                SET resolved_at = now(), resolved_by_run = %s, resolution_note = %s
+                WHERE resolved_at IS NULL AND ({' OR '.join(clauses)})
+                RETURNING id, beneficiary_id, mentioned_skus""",
+            (payload.run_id, payload.note, *params))
+        rows = cur.fetchall()
+    logger.info("resolved %d feedback row(s) for skus=%s run=%s",
+                len(rows), payload.skus, payload.run_id)
+    return {"resolved": len(rows), "rows": rows}
+
+
+@app.post("/feedback/{feedback_id}/reopen")
+def reopen_feedback(feedback_id: int):
+    """Undo a resolution — the need was not actually met."""
+    with db.get_cursor() as cur:
+        cur.execute("""UPDATE feedback.feedback_entries
+                       SET resolved_at=NULL, resolved_by_run=NULL, resolution_note=NULL
+                       WHERE id=%s RETURNING id""", (feedback_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "no such feedback row")
+    return {"ok": True, "id": feedback_id}
 
 
 @app.get("/metrics")
