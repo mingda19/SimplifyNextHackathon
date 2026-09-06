@@ -224,7 +224,7 @@ def test_quote_only_plan_does_not_commit(graph, monkeypatch):
     from orchestrator.state import Plan
     plan = Plan(stockout_sku='RICE-5KG', days_until_failure=8, reasoning='quote only', steps=[
         {'action': 'request_quote', 'sku': 'RICE-5KG', 'qty': 250, 'vendor_id': 'VENDOR-COMMUNITY'}])
-    monkeypatch.setattr(llm, 'predict_plan', lambda *a: (plan, None))
+    monkeypatch.setattr(llm, 'predict_plan', lambda *a, **kw: (plan, None))
     monkeypatch.setattr(services, 'vendor_order', lambda *a, **kw: pytest.fail('quote committed'))
     result, summary = run(graph, 'only-quote')
     assert summary['queued']['total_sgd'] == 0

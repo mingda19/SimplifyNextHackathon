@@ -184,7 +184,7 @@ def test_real_lot_validation_adapts_without_issuing_stock(live_graph, monkeypatc
     plan = Plan(stockout_sku=sku, days_until_failure=1, reasoning='Issue live stock', steps=[
         {'action': 'reallocate_lot', 'sku': sku, 'qty': 1,
          'lot_id': 'LOT-BEANS-CANNED-400G-EXPIRED'}])
-    monkeypatch.setattr(llm, 'predict_plan', lambda *a: (plan, None))
+    monkeypatch.setattr(llm, 'predict_plan', lambda *a, **kw: (plan, None))
     state = new_state('lot-' + uuid.uuid4().hex)
     cfg = {'configurable': {'thread_id': state['thread_id']}}
     before = stack['sql']('SELECT on_hand FROM items WHERE sku=%s', (sku,))[0][0]

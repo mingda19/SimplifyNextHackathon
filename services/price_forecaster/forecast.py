@@ -36,7 +36,11 @@ import dataset as D
 import xgboost_model as X
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]
+# Two levels up from the local source tree (services/price_forecaster/forecast.py).
+# The Docker image copies this service flat into /app with no repo root above
+# it, so fall back to HERE there -- load_dotenv below is then a silent no-op
+# and Compose's own `environment:` block is the config source instead.
+REPO_ROOT = HERE.parents[1] if len(HERE.parents) > 1 else HERE
 
 # The root .env is the single control point for the whole project. Without this
 # the gate could only be changed by editing source, and a teammate setting
