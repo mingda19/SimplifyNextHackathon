@@ -8,13 +8,13 @@ install:
 	python3 -m venv $(VENV) && $(VENV)/bin/python -m pip install -q -U pip -r requirements.txt
 
 run:            ## interactive approval, fake mode, $0
-	$(PY) -m orchestrator
+	FAKE_SERVICES=1 FAKE_LLM=1 $(PY) -m orchestrator
 
 demo:           ## the scripted scenario, auto-approved, $0
-	$(PY) -m orchestrator --approve -v
+	FAKE_SERVICES=1 FAKE_LLM=1 $(PY) -m orchestrator --approve -v
 
 run-a:          ## donation-fed charity (Type A)
-	$(PY) -m orchestrator --type A --approve
+	FAKE_SERVICES=1 FAKE_LLM=1 $(PY) -m orchestrator --type A --approve
 
 test:
 	$(PY) -m pytest services/orchestrator/tests/ -q
@@ -58,5 +58,5 @@ forecaster-train:  ## retrain both artefacts + refit the confidence calibrator
 forecaster-eval:   ## score both artefacts on validation
 	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/python evaluator.py --val
 
-forecaster-serve:  ## run the endpoint on :8003
-	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/uvicorn app:app --port 8003
+forecaster-serve:  ## run the endpoint on :8004
+	cd services/price_forecaster && PYTHONPATH=. ../../$(VENV)/bin/uvicorn app:app --port 8004

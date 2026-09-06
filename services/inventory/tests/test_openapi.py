@@ -16,6 +16,8 @@ def test_openapi_contains_every_workstream_one_route() -> None:
         "/inventory/alerts",
         "/inventory/{sku}",
         "/inventory/{sku}/allocate",
+        "/inventory/{sku}/allocate/validate",
+        "/inventory/{sku}/receive",
         "/vendor/{id}/quote",
         "/vendor/{id}/order",
     }

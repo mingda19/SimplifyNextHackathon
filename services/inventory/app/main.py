@@ -1,7 +1,7 @@
 """FastAPI application entry point."""
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, HTTPException, status
+from pantry_common.security import require_operator
 
 from app import __version__
 from app.config import get_settings
@@ -27,8 +27,8 @@ app.add_middleware(
 )
 
 install_error_handlers(app)
-app.include_router(inventory_router)
-app.include_router(vendors_router)
+app.include_router(inventory_router, dependencies=[Depends(require_operator)])
+app.include_router(vendors_router, dependencies=[Depends(require_operator)])
 
 
 @app.get(

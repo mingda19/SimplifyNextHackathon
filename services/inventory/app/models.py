@@ -20,6 +20,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     MetaData,
     Numeric,
     String,
@@ -278,6 +279,14 @@ class VendorOffer(Base):
 
     vendor: Mapped[Vendor] = relationship(back_populates="offers")
     item: Mapped[Item] = relationship(back_populates="vendor_offers")
+
+
+class Operation(Base):
+    """Durable replay results, committed in the same transaction as the mutation."""
+    __tablename__ = "operations"
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
 __all__ = [

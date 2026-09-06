@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from decimal import Decimal
 
 from langgraph.types import interrupt
 
 from ..config import BASELINES
-from ..state import AgentState, Plan
+from ..state import APPROVAL_VERSION, AgentState, Plan
+from ..services import total_sgd
 
 log = logging.getLogger(__name__)
 
@@ -30,12 +32,12 @@ def build_summary(state: AgentState) -> dict[str, Any]:
     adaptations = [a for a in attempts if a.get("node") == "adapt" and a.get("ok")]
     staged = state.get("staged", [])
 
-    total = 0.0
-    for s in staged:
-        if s.get("type") == "order":
-            total += float(s.get("result", {}).get("total_sgd", 0) or 0)
+    order_totals = [total_sgd(s["result"]) for s in staged
+                    if s["step"]["action"] == "place_order"]
+    total = sum(order_totals, Decimal(0)) if state.get("charity_type", "B") == "B" else Decimal(0)
 
     return {
+        "approval_version": state.get("approval_version"),
         "sensed": {
             "as_of": sow.get("as_of"),
             "below_reorder": (sow.get("alerts") or {}).get("below_reorder", []),
@@ -56,7 +58,7 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         "queued": {
             "steps": [s.model_dump() for s in plan.steps] if plan else [],
             "staged": staged,
-            "total_sgd": round(total, 2),
+            "total_sgd": float(total),
         },
         # The panel that matters. Give it the most space in the UI.
         "adaptations": [
@@ -66,9 +68,14 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         ],
         "guardrails": {
             "baselines": BASELINES,
-            "exceeds_single_order_cap": total > BASELINES["max_single_order_sgd"],
-            "halt_reason": state.get("halt_reason"),
+            "exceeds_single_order_cap": state.get("charity_type", "B") == "B" and any(
+                t > BASELINES["max_single_order_sgd"] for t in order_totals),
+            "exceeds_monthly_budget": total > BASELINES["monthly_budget_sgd"],
+            "halt_reason": state.get("halt_reason") or (
+                "This run predates the approval fix. Review existing orders and start a new run."
+                if state.get("approval_version") != APPROVAL_VERSION else None),
         },
+        "trace": attempts,
     }
 
 
@@ -86,6 +93,8 @@ def approval(state: AgentState) -> dict[str, Any]:
         verdict = str(decision or "rejected")
     verdict = verdict.strip().lower()
     verdict = verdict if verdict in {"approved", "rejected"} else "rejected"
+    if verdict == "approved" and (summary["guardrails"]["halt_reason"] or summary["guardrails"]["exceeds_monthly_budget"]):
+        return {"approval": "rejected", "halt_reason": summary["guardrails"]["halt_reason"] or "Monthly budget exceeded."}
 
     log.info("approval: human said %s", verdict)
     return {"approval": verdict,

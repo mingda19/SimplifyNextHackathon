@@ -15,7 +15,7 @@ from psycopg2 import pool
 
 from app.config import settings
 
-_pool: "psycopg2.pool.SimpleConnectionPool | None" = None
+_pool: "psycopg2.pool.ThreadedConnectionPool | None" = None
 
 # The shared DATABASE_URL uses the SQLAlchemy dialect suffix (postgresql+psycopg://)
 # for the inventory service's SQLAlchemy/psycopg3 stack. This service talks to
@@ -29,7 +29,7 @@ def init_pool(minconn: int = 1, maxconn: int = 10) -> None:
     if _pool is not None:
         return
     dsn = _DIALECT_SUFFIX_RE.sub("postgresql://", settings.database_url)
-    _pool = psycopg2.pool.SimpleConnectionPool(minconn, maxconn, dsn=dsn)
+    _pool = psycopg2.pool.ThreadedConnectionPool(minconn, maxconn, dsn=dsn)
 
 
 @contextmanager

@@ -14,11 +14,12 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
+from pantry_common.security import decode_token, signing_secret
+from fastapi import HTTPException
 
 ITERATIONS = 480_000
 ALGO = "pbkdf2_sha256"
 
-JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "dev-only-change-me")
 JWT_ALGO = "HS256"
 TOKEN_TTL_HOURS = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "12"))
 
@@ -71,11 +72,11 @@ def make_token(user: dict) -> str:
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(hours=TOKEN_TTL_HOURS)).timestamp()),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+    return jwt.encode(payload, signing_secret(), algorithm=JWT_ALGO)
 
 
 def read_token(token: str) -> dict | None:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-    except jwt.PyJWTError:
+        return decode_token(token)
+    except HTTPException:
         return None

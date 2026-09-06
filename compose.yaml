@@ -1,5 +1,12 @@
 name: simplifynext
 
+x-service-env: &service-env
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
+  AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?Set a random AUTH_JWT_SECRET of at least 32 characters}
+  SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:?Set a separate random SERVICE_AUTH_TOKEN of at least 32 characters}
+  FAKE_LLM: ${FAKE_LLM:-1}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -8,85 +15,94 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-simplifynext}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-simplifynext}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Initialize BOTH auth and feedback schemas alphabetically
-      - ./services/auth/schema.sql:/docker-entrypoint-initdb.d/01-init-auth.sql
-      - ./services/feedback/schema.sql:/docker-entrypoint-initdb.d/02-init-feedback.sql
-      - ./services/orchestrator/schema.sql:/docker-entrypoint-initdb.d/03-init-orchestrator.sql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 2s
       timeout: 3s
       retries: 15
 
-  inventory:
-    build:
-      context: ./services/inventory
+  schema-bootstrap:
+    image: postgres:16-alpine
     environment:
-      APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
-    ports:
-      - "${INVENTORY_PORT:-8000}:8000"
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-simplifynext}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-simplifynext}
+      PGDATABASE: ${POSTGRES_DB:-simplifynext}
+    volumes:
+      - ./services/auth/schema.sql:/bootstrap/auth.sql:ro
+      - ./services/feedback/schema.sql:/bootstrap/feedback.sql:ro
+      - ./services/orchestrator/schema.sql:/bootstrap/agent.sql:ro
     depends_on:
       postgres:
         condition: service_healthy
-    command:
-      - sh
-      - -c
-      - alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: ["sh", "-c", "psql -v ON_ERROR_STOP=1 -f /bootstrap/auth.sql -f /bootstrap/feedback.sql -f /bootstrap/agent.sql"]
+
+  inventory:
+    build:
+      context: .
+      dockerfile: services/inventory/Dockerfile
+    environment:
+      <<: *service-env
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      schema-bootstrap:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
 
   auth:
     build:
-      context: ./services/auth
+      context: .
+      dockerfile: services/auth/Dockerfile
     environment:
-      APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
-    ports:
-      - "8001:8001"
+      <<: *service-env
+    ports: ["127.0.0.1:8001:8001"]
     depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - sh
-      - -c
-      - uvicorn app.main:app --host 0.0.0.0 --port 8001
+      schema-bootstrap:
+        condition: service_completed_successfully
 
   feedback:
     build:
-      context: ./services/feedback
+      context: .
+      dockerfile: services/feedback/Dockerfile
     environment:
-      APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
-    ports:
-      - "8002:8002"
+      <<: *service-env
+      INVENTORY_URL: http://inventory:8000
+      AUTH_URL: http://auth:8001
+    ports: ["127.0.0.1:8002:8002"]
     depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - sh
-      - -c
-      - uvicorn app.main:app --host 0.0.0.0 --port 8002
+      schema-bootstrap:
+        condition: service_completed_successfully
 
   orchestrator:
     build:
-      context: ./services/orchestrator
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
     environment:
-      APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
-    ports:
-      - "8003:8003"
+      <<: *service-env
+      FAKE_SERVICES: "0"
+      INVENTORY_URL: http://inventory:8000
+      FEEDBACK_URL: http://feedback:8002
+      PRICING_URL: http://price-forecaster:8004
+      CHECKPOINT_PATH: /data/checkpoints.db
+      LEDGER_PATH: /data/spend.json
+    volumes:
+      - orchestrator_data:/data
+    ports: ["127.0.0.1:8003:8003"]
     depends_on:
-      postgres:
-        condition: service_healthy
-    command:
-      - sh
-      - -c
-      # Notice this is `api:app` because your screenshot shows `api.py` is in the root, not inside an `app/` folder!
-      - uvicorn orchestrator.api:app --host 0.0.0.0 --port 8003
+      schema-bootstrap:
+        condition: service_completed_successfully
+
+  price-forecaster:
+    build:
+      context: .
+      dockerfile: services/price_forecaster/Dockerfile
+    environment:
+      PRICE_CONFIDENCE_GATE: ${PRICE_CONFIDENCE_GATE:-0.60}
+    ports: ["127.0.0.1:8004:8004"]
 
 volumes:
   postgres_data:
+  orchestrator_data:
