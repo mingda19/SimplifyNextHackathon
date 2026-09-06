@@ -11,6 +11,10 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Initialize BOTH auth and feedback schemas alphabetically
+      - ./services/auth/schema.sql:/docker-entrypoint-initdb.d/01-init-auth.sql
+      - ./services/feedback/schema.sql:/docker-entrypoint-initdb.d/02-init-feedback.sql
+      - ./services/orchestrator/schema.sql:/docker-entrypoint-initdb.d/03-init-orchestrator.sql
     healthcheck:
       test:
         - CMD-SHELL
@@ -25,7 +29,6 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "${INVENTORY_PORT:-8000}:8000"
     depends_on:
@@ -35,16 +38,55 @@ services:
       - sh
       - -c
       - alembic upgrade head && python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
+
+  auth:
+    build:
+      context: ./services/auth
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+  feedback:
+    build:
+      context: ./services/feedback
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - uvicorn app.main:app --host 0.0.0.0 --port 8002
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-simplifynext}:${POSTGRES_PASSWORD:-simplifynext}@postgres:5432/${POSTGRES_DB:-simplifynext}
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      # Notice this is `api:app` because your screenshot shows `api.py` is in the root, not inside an `app/` folder!
+      - uvicorn orchestrator.api:app --host 0.0.0.0 --port 8003
 
 volumes:
   postgres_data:
