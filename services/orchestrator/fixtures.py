@@ -115,8 +115,13 @@ def fake_adaptation(step: dict[str, Any], error: dict[str, Any]) -> dict[str, An
 
     if code == "MOQ_NOT_MET":
         min_qty = next((a.get("minimum_qty") or a.get("min_qty") for a in alts if a.get("minimum_qty") or a.get("min_qty")), 250)
-        cheaper = next((a for a in alts if a.get("vendor_id")
-                        and a.get("unit_price_sgd", 99) < 2.10), None)
+        current_price = next((a["unit_price_sgd"] for a in alts
+                              if a.get("vendor_id") == step.get("vendor_id") and "unit_price_sgd" in a),
+                             VENDORS.get(step.get("vendor_id"), {}).get("base_price_sgd", float("inf")))
+        cheaper = min((a for a in alts if a.get("vendor_id") != step.get("vendor_id")
+                       and a.get("vendor_id") and a.get("available_qty", min_qty) >= min_qty
+                       and a.get("unit_price_sgd", float("inf")) < current_price),
+                      key=lambda a: a["unit_price_sgd"], default=None)
         revised["qty"] = min_qty
         what = f"Raised quantity from {step.get('qty')} to the {min_qty} minimum"
         if cheaper:
@@ -145,7 +150,13 @@ def fake_adaptation(step: dict[str, Any], error: dict[str, Any]) -> dict[str, An
                 "confidence": 0.72}
 
     if code == "LOT_EXPIRED":
-        revised["action"] = "reallocate_lot"
+        live = next((a for a in alts if a.get("lot_id")), None)
+        if live:
+            revised["action"] = "reallocate_lot"
+            revised["lot_id"] = live["lot_id"]
+            revised["qty"] = min(revised["qty"], live.get("available_qty", revised["qty"]))
+        else:
+            revised["action"] = "flag_for_human"
         return {"revised_step": revised,
                 "what_changed": "Target lot has expired; reallocating from a live lot.",
                 "confidence": 0.80}

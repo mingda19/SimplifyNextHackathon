@@ -23,7 +23,7 @@ def init_pool(minconn: int = 1, maxconn: int = 5) -> None:
     if _pool is not None:
         return
     dsn = _DIALECT.sub("postgresql://", os.getenv("DATABASE_URL", ""))
-    _pool = psycopg2.pool.SimpleConnectionPool(minconn, maxconn, dsn=dsn)
+    _pool = psycopg2.pool.ThreadedConnectionPool(minconn, maxconn, dsn=dsn)
 
 
 @contextmanager

@@ -103,10 +103,18 @@ def main() -> int:
     _banner()
 
     thread_id = args.thread or f"run-{uuid.uuid4().hex[:8]}"
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 256}
     graph = compile_graph()
 
-    result = graph.invoke(new_state(thread_id, args.type), cfg)
+    if args.thread:
+        snapshot = graph.get_state(cfg)
+        if not snapshot.values:
+            print("No checkpoint exists for this thread.")
+            graph.checkpointer.conn.close()
+            return 1
+        result = graph.invoke(None, cfg) if snapshot.next else snapshot.values
+    else:
+        result = graph.invoke(new_state(thread_id, args.type), cfg)
 
     # ---- the interrupt round-trip ---------------------------------------
     if "__interrupt__" in result:
@@ -137,6 +145,7 @@ def main() -> int:
 
     print(f"\n  thread: {thread_id}")
     print(f"  ledger: {ledger.summary()}\n")
+    graph.checkpointer.conn.close()
     return 0
 
 

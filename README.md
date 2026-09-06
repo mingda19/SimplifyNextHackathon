@@ -2,6 +2,8 @@
 
 > SimplifyNext Agentic AI Hackathon 2026 · Submission due **7 Sep 2026**
 
+For the current bug fixes, upgrade steps and verification status, see [Workstream 4 bug-fix handoff](docs/BUGFIX_HANDOFF.md).
+
 ## Problem statement
 
 > Change is everywhere — in how we live, learn and relate to one another. Transformation takes time,

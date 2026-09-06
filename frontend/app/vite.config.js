@@ -28,9 +28,9 @@ export default defineConfig({
         rewrite: (p) => p.replace(/^\/api\/feedback/, ""),
       },
 
-      // 3. We put Orchestrator on 8003. If Orchestrator handles Pricing or the Agent, point them to 8003!
+      // Pricing is a separate service on 8004.
       "/api/pricing": {
-        target: "http://127.0.0.1:8003",
+        target: "http://127.0.0.1:8004",
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/pricing/, ""),
       },

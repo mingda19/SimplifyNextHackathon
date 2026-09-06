@@ -6,10 +6,11 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_FLOOR
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.errors import (
+    DomainError,
     LeadTimeExceededError,
     MoqNotMetError,
     NotFoundError,
@@ -23,6 +24,8 @@ from app.schemas import (
     VendorQuoteResponse,
 )
 from app.services.pricing import LocalPrice, calculate_local_price
+from app.services import idempotency
+from pantry_common.baselines import BASELINES
 
 
 def _utc_now() -> datetime:
@@ -194,7 +197,7 @@ def _moq_alternatives(
                 _vendor_alternative(
                     offer=candidate_offer,
                     vendor=candidate_vendor,
-                    requested_qty=requested_qty,
+                    requested_qty=min(max(requested_qty, vendor.moq_units), candidate_offer.available_qty),
                     item=item,
                 )
             )
@@ -257,13 +260,18 @@ def _lead_time_alternatives(
 def _price(*, item: Item, offer: VendorOffer, qty: int) -> LocalPrice:
     """Keep the Workstream 3 replacement seam out of orchestration logic."""
 
-    return calculate_local_price(
+    price = calculate_local_price(
         unit_cost_sgd=Decimal(item.unit_cost_sgd),
         vendor_multiplier=Decimal(offer.price_multiplier),
         qty=qty,
         bulk_discount_threshold=offer.bulk_discount_threshold,
         bulk_discount_rate=Decimal(offer.bulk_discount_rate),
     )
+    if max(price.unit_price_sgd, price.total_price_sgd) > Decimal("9999999999.99"):
+        raise DomainError(status_code=422, code="VALIDATION_ERROR",
+                          message="The calculated price exceeds the supported monetary range.",
+                          remedy_hint="Reduce the quantity or correct the unit cost.")
+    return price
 
 
 def _validate_request(
@@ -367,9 +375,16 @@ def place_vendor_order(
     vendor_id: str,
     payload: VendorOrderRequest,
     now: datetime | None = None,
+    idempotency_key: str | None = None,
 ) -> VendorOrderResponse:
     """Revalidate, atomically reserve vendor stock, and commit a placed order."""
 
+    request = {"action": "order", "vendor_id": vendor_id, **payload.model_dump(mode="json")}
+    previous = idempotency.replay(db, idempotency_key, request)
+    if previous is not None:
+        return VendorOrderResponse.model_validate(previous)
+    # Serialize procurement across vendors as well as across concurrent runs.
+    idempotency.lock(db, "procurement-monthly-budget")
     vendor, item, offer = _load_request_context(
         db,
         vendor_id=vendor_id,
@@ -387,6 +402,16 @@ def place_vendor_order(
     expected_at = placed_at + timedelta(days=vendor.lead_time_days)
     price = _price(item=item, offer=valid_offer, qty=payload.qty)
 
+    if payload.expected_unit_price_sgd is not None and price.unit_price_sgd != payload.expected_unit_price_sgd:
+        raise idempotency.conflict("PRICE_CHANGED", "The quoted price changed; a new approval is required.")
+    month_start = placed_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    spent = db.scalar(select(func.coalesce(func.sum(Order.qty * Order.unit_price_sgd), 0)).where(
+        Order.placed_at >= month_start, Order.placed_at < next_month,
+        Order.status != OrderStatus.CANCELLED))
+    if Decimal(spent) + price.total_price_sgd > Decimal(str(BASELINES["monthly_budget_sgd"])):
+        raise idempotency.conflict("MONTHLY_BUDGET_EXCEEDED", "This order would exceed the monthly procurement budget.")
+
     order = Order(
         order_id=f"ORD-{uuid4().hex.upper()}",
         vendor_id=vendor.vendor_id,
@@ -399,6 +424,8 @@ def place_vendor_order(
     )
     valid_offer.available_qty -= payload.qty
     db.add(order)
+    result = VendorOrderResponse.model_validate(order)
+    idempotency.record(db, idempotency_key, request, result.model_dump(mode="json"))
     try:
         db.commit()
     except Exception:

@@ -37,6 +37,7 @@ from typing import Optional
 
 import urllib.error
 import urllib.request
+from pantry_common.security import service_headers
 
 logger = logging.getLogger("feedback.catalogue")
 
@@ -56,7 +57,7 @@ class SKUItem:
 
 def _fetch_live() -> list[dict]:
     url = f"{INVENTORY_URL.rstrip('/')}/inventory"
-    with urllib.request.urlopen(url, timeout=HTTP_TIMEOUT) as r:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=service_headers()), timeout=HTTP_TIMEOUT) as r:
         payload = json.loads(r.read().decode("utf-8"))
     return payload if isinstance(payload, list) else payload.get("items", [])
 
@@ -85,7 +86,7 @@ _memo: dict = {}
 def load_items(force: bool = False) -> list[dict]:
     """Live items, memoised for CATALOGUE_TTL seconds, cache-backed on failure."""
     now = time.time()
-    if not force and _memo.get("items") and now - _memo.get("at", 0) < CACHE_TTL_SECONDS:
+    if not force and "items" in _memo and now - _memo.get("at", 0) < CACHE_TTL_SECONDS:
         return _memo["items"]
 
     try:
@@ -101,10 +102,9 @@ def load_items(force: bool = False) -> list[dict]:
             logger.warning("catalogue: inventory unreachable (%s), using disk cache "
                            "(%d items)", exc, len(cached))
             return cached
-        raise RuntimeError(
-            f"inventory service unreachable at {INVENTORY_URL} and no cached "
-            f"catalogue on disk — start the inventory service once to seed the cache"
-        ) from exc
+        logger.warning("catalogue unavailable with no cache: %s", exc)
+        _memo.update(items=[], at=now, source="unavailable")
+        return []
 
 
 def source() -> str:

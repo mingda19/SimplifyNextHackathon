@@ -10,6 +10,8 @@ aws/cli/
 
 # runtime artefacts — never commit
 *.db
+*.db-wal
+*.db-shm
 spend.json
 
 # Python
@@ -30,3 +32,6 @@ dist/
 
 node_modules/
 services/feedback/seed/
+
+# Local readiness-test runtime and reports
+.qa/

@@ -31,14 +31,14 @@ class Settings:
     # --- cost controls (see plan.md §7) -----------------------------------
     # FAKE_LLM=1 is the default ON PURPOSE. Turning it off spends real money.
     fake_llm: bool = _flag("FAKE_LLM", "1")
-    fake_services: bool = _flag("FAKE_SERVICES", "1")
+    fake_services: bool = _flag("FAKE_SERVICES", "0")
     # Per-service overrides, each defaulting to FAKE_SERVICES. Lets workstreams
     # be integrated one at a time as they land instead of all-or-nothing.
-    fake_inventory: bool = _flag("FAKE_INVENTORY", os.getenv("FAKE_SERVICES", "1"))
-    fake_feedback: bool = _flag("FAKE_FEEDBACK", os.getenv("FAKE_SERVICES", "1"))
-    fake_pricing: bool = _flag("FAKE_PRICING", os.getenv("FAKE_SERVICES", "1"))
+    fake_inventory: bool = _flag("FAKE_INVENTORY", os.getenv("FAKE_SERVICES", "0"))
+    fake_feedback: bool = _flag("FAKE_FEEDBACK", os.getenv("FAKE_SERVICES", "0"))
+    fake_pricing: bool = _flag("FAKE_PRICING", os.getenv("FAKE_SERVICES", "0"))
     max_session_spend_usd: float = float(os.getenv("MAX_SESSION_SPEND_USD", "2.00"))
-    ledger_path: Path = ROOT / "spend.json"
+    ledger_path: Path = Path(os.getenv("LEDGER_PATH", str(ROOT / "spend.json")))
     aws_dir: Path = AWS_DIR
 
     # --- aws / bedrock ----------------------------------------------------
@@ -46,8 +46,7 @@ class Settings:
     aws_profile: str | None = os.getenv("AWS_PROFILE") or None
     aws_region: str = os.getenv("AWS_REGION", "ap-southeast-1")
     # Inference region may differ from the SSO region — see `make check-bedrock`.
-    bedrock_region: str = os.getenv("BEDROCK_REGION") or os.getenv(
-        "AWS_REGION", "ap-southeast-1")
+    bedrock_region: str = os.getenv("BEDROCK_REGION") or "us-east-1"
     # bedrock-runtime InvokeModel needs the INFERENCE PROFILE id (us. prefix).
     # Claude Haiku 4.5 is INFERENCE_PROFILE-only in us-east-1, so the bare
     # `anthropic.claude-haiku-4-5` id is rejected on this path.
@@ -59,21 +58,16 @@ class Settings:
     # --- upstream services (workstreams 1/2/3) ----------------------------
     inventory_url: str = os.getenv("INVENTORY_URL", "http://localhost:8000")
     feedback_url: str = os.getenv("FEEDBACK_URL", "http://localhost:8002")
-    pricing_url: str = os.getenv("PRICING_URL", "http://localhost:8003")
+    pricing_url: str = os.getenv("PRICING_URL", "http://localhost:8004")
     http_timeout: float = float(os.getenv("HTTP_TIMEOUT", "5.0"))
 
     # --- graph ------------------------------------------------------------
-    max_retries: int = int(os.getenv("MAX_ADAPT_RETRIES", "3"))
-    checkpoint_path: Path = ROOT / "checkpoints.db"
+    max_retries: int = min(3, max(0, int(os.getenv("MAX_ADAPT_RETRIES", "3"))))
+    checkpoint_path: Path = Path(os.getenv("CHECKPOINT_PATH", str(ROOT / "checkpoints.db")))
 
 
 settings = Settings()
 
 # Baselines live in code, not in prompt prose — the approval node reads these
 # back to the human, so there must be exactly one source of truth.
-BASELINES: dict[str, float] = {
-    "min_days_cover": 10,
-    "monthly_budget_sgd": 5_000,
-    "max_single_order_sgd": 1_500,   # above this -> mandatory human approval
-    "expiry_buffer_days": 14,
-}
+from pantry_common.baselines import BASELINES

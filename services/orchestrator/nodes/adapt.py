@@ -10,6 +10,7 @@ drain the budget while nobody is watching.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from .. import llm
@@ -34,6 +35,12 @@ def adapt(state: AgentState) -> dict[str, Any]:
                               "reason": msg}]}
 
     failed_step = error.get("failed_step", {})
+    if error.get("code") == "RATE_LIMITED":
+        delay = error.get("retry_after_seconds", 1)
+        if delay > 60:
+            return {"halt_reason": f"Vendor requested a {delay:g}s wait; retry this run later.",
+                    "attempts": [{"node": "adapt", "ok": False, "error": error}]}
+        time.sleep(max(0, delay))
     try:
         adaptation, led = llm.adapt_step(failed_step, error, retry)
     except BudgetExceeded as exc:

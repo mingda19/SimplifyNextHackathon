@@ -8,6 +8,13 @@ some point on 5 Sep, and the graph must keep reasoning without it.
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timezone
+from decimal import Decimal
+from email.utils import parsedate_to_datetime
+from urllib.parse import quote
+
+from pantry_common.security import service_headers
 from typing import Any
 
 import httpx
@@ -26,7 +33,7 @@ def _get(base: str, path: str) -> Any:
     url = f"{base.rstrip('/')}{path}"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.get(url)
+            r = c.get(url, headers=service_headers())
             r.raise_for_status()
             return r.json()
     except httpx.HTTPError as exc:
@@ -82,7 +89,7 @@ def get_price_forecast(series: str = "Rice") -> dict[str, Any]:
     if settings.fake_pricing:
         return fixtures.PRICE_FORECAST
     return _get(settings.pricing_url,
-                f"/price/forecast?series={series}&horizon_months=3")
+                f"/price/forecast?series={quote(series)}&horizon_months=3")
 
 
 # ---------------------------------------------------------------- writers ---
@@ -133,34 +140,105 @@ class VendorError(Exception):
 
     def __init__(self, status: int, code: str, message: str,
                  alternatives: list[dict[str, Any]],
-                 remedy_hint: str = "") -> None:
+                 remedy_hint: str = "", retry_after_seconds: float | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.retry_after_seconds = retry_after_seconds
         self.body = {"code": code, "message": message,
                      "remedy_hint": remedy_hint, "alternatives": alternatives}
+        if retry_after_seconds is not None:
+            self.body["retry_after_seconds"] = retry_after_seconds
 
 
-def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
-    """Stage an order. Raises VendorError on a 4xx."""
+
+def total_sgd(result: dict) -> Decimal:
+    """Normalize WS1 quotes and orders without a silent zero fallback."""
+    value = result.get("total_price_sgd", result.get("total_sgd"))
+    if value is None:
+        value = Decimal(str(result["qty"])) * Decimal(str(result["unit_price_sgd"]))
+    total = Decimal(str(value)).quantize(Decimal("0.01"))
+    if not total.is_finite() or total < 0:
+        raise ValueError("invalid order total")
+    return total
+
+
+def _retry_after(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError:
+        try:
+            seconds = (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    import math
+    return max(0, seconds) if math.isfinite(seconds) else None
+
+
+def _post(path: str, body: dict, key: str | None = None) -> dict:
+    url = f"{settings.inventory_url.rstrip('/')}{path}"
+    headers = service_headers()
+    if key:
+        headers["Idempotency-Key"] = key
+    # Quotes/validation are read-only. Committing calls are retried only with
+    # the same durable idempotency key, including after ambiguous timeouts.
+    retries = 3 if key or path.endswith(("/quote", "/validate")) else 1
+    for attempt in range(retries):
+        try:
+            with httpx.Client(timeout=settings.http_timeout) as c:
+                r = c.post(url, json=body, headers=headers)
+            if r.is_success:
+                try:
+                    result = r.json()
+                    if not isinstance(result, dict):
+                        raise ValueError("expected an object")
+                    return result
+                except ValueError as exc:
+                    raise ServiceError("inventory returned an invalid response") from exc
+            if 400 <= r.status_code < 500:
+                try:
+                    b = r.json()
+                except ValueError:
+                    b = {}
+                if not isinstance(b, dict):
+                    b = {}
+                raise VendorError(r.status_code, b.get("code", "UNKNOWN"),
+                                  b.get("message", r.text), b.get("alternatives", []),
+                                  b.get("remedy_hint", ""), _retry_after(r.headers.get("Retry-After")))
+            failure = f"inventory returned {r.status_code}"
+        except httpx.HTTPError as exc:
+            failure = f"{type(exc).__name__}: {exc}"
+        if attempt + 1 < retries:
+            time.sleep(0.25 * 2**attempt)
+    raise ServiceError(f"POST {url} failed: {failure}")
+
+
+def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     if settings.fake_inventory:
         return _fake_vendor_call(vendor_id, sku, qty)
+    result = _post(f"/vendor/{quote(vendor_id, safe='')}/quote", {"sku": sku, "qty": qty})
+    return {**result, "total_sgd": float(total_sgd(result))}
 
-    url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/order"
-    try:
-        with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"sku": sku, "qty": qty})
-    except httpx.HTTPError as exc:
-        # A transport failure is not a vendor decision. Surface it as a
-        # ServiceError so `act` routes to `adapt` instead of the graph dying.
-        raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
-    if r.is_success:
-        return r.json()
-    if 400 <= r.status_code < 500:
-        try:
-            b = r.json()
-        except ValueError:
-            b = {}
-        raise VendorError(r.status_code, b.get("code", "UNKNOWN"),
-                          b.get("message", r.text),
-                          b.get("alternatives", []), b.get("remedy_hint", ""))
-    raise ServiceError(f"vendor {vendor_id} returned {r.status_code}")
+
+def vendor_order(vendor_id: str, sku: str, qty: int, *,
+                 idempotency_key: str | None = None,
+                 expected_unit_price_sgd: float | None = None) -> dict[str, Any]:
+    """Commit an approved order. Never call this during staging."""
+    if settings.fake_inventory:
+        return {**_fake_vendor_call(vendor_id, sku, qty), "status": "PLACED",
+                "order_id": f"FAKE-{idempotency_key}"}
+    body = {"sku": sku, "qty": qty}
+    if expected_unit_price_sgd is not None:
+        body["expected_unit_price_sgd"] = expected_unit_price_sgd
+    result = _post(f"/vendor/{quote(vendor_id, safe='')}/order", body, idempotency_key)
+    return {**result, "total_sgd": float(total_sgd(result))}
+
+
+def allocate_lot(sku: str, lot_id: str, qty: int, *, validate_only: bool = False,
+                 idempotency_key: str | None = None) -> dict[str, Any]:
+    if settings.fake_inventory:
+        return {"sku": sku, "lot_id": lot_id, "qty": qty}
+    suffix = "/validate" if validate_only else ""
+    return _post(f"/inventory/{quote(sku, safe='')}/allocate{suffix}",
+                 {"lot_id": lot_id, "qty": qty}, idempotency_key)

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import secrets
 from typing import Optional
+from pantry_common.security import signing_secret
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +73,7 @@ def require_charity(user: dict = Depends(current_user)) -> dict:
 
 @app.on_event("startup")
 def _startup() -> None:
+    signing_secret()
     db.init_pool()
 
 
@@ -115,7 +117,7 @@ def signup(payload: SignUp):
              payload.display_name))
         user = cur.fetchone()
     logger.info("charity account created: %s", user["email"])
-    return {"token": make_token(user), "user": user}
+    return {"token": make_token(user), "user": {**user, "name": user["display_name"]}}
 
 
 @app.post("/auth/login")
@@ -137,7 +139,7 @@ def login(payload: LogIn):
         cur.execute("UPDATE auth.users SET last_login_at=now() WHERE id=%s",
                     (user["id"],))
     user.pop("password_hash")
-    return {"token": make_token(user), "user": user}
+    return {"token": make_token(user), "user": {**user, "name": user["display_name"]}}
 
 
 @app.post("/auth/logout")
@@ -231,8 +233,10 @@ def resolve_request_link(token: str):
 @app.post("/auth/request-links/{token}/used")
 def mark_used(token: str):
     with db.get_cursor() as cur:
-        cur.execute("UPDATE auth.request_links SET uses = uses + 1 WHERE token=%s",
+        cur.execute("UPDATE auth.request_links SET uses = uses + 1 WHERE token=%s AND is_active RETURNING token",
                     (token,))
+        if not cur.fetchone():
+            raise HTTPException(404, "this request link is not valid")
     return {"ok": True}
 
 
