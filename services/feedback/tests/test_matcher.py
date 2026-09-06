@@ -190,6 +190,23 @@ GOLDEN_CASES = [
         None,
         None,
     ),
+    # --- Phase 5c: repo owner's decision -- generic "drinks" requests resolve
+    # to bottled water for now (not a catalogue gap), since the charity does
+    # stock something drinkable even though nobody asked for water
+    # specifically. Revisit if/when a wider beverage catalogue exists;
+    # KNOWN_GAPS + the unmet-needs aggregation is how a *more specific*
+    # unstocked drink (e.g. "milo", "juice") still gets surfaced instead of
+    # silently matching water too. ---
+    ("generic 'drinks' -> bottled water (repo owner decision)", "drinks", "WATER-1-5L", None, None),
+    ("generic 'beverages' -> bottled water (repo owner decision)", "beverages", "WATER-1-5L", None, None),
+    # "drink" is NOT its own alias key -- it fuzzy-matched "durian" at 0.73
+    # when it was one (false match on "fresh durian please"). It still
+    # correctly resolves via the fuzzy layer against the surviving "drinks"
+    # alias (0.91, singular/plural), which does NOT collide with "durian"
+    # (0.67, below threshold) -- this is the desired outcome, not a residual
+    # false positive.
+    ("generic 'drink' (singular) -> water via fuzzy against 'drinks', not its own alias",
+     "drink", "WATER-1-5L", None, None),
 ]
 
 

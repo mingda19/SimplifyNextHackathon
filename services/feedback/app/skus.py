@@ -151,6 +151,17 @@ ALIASES: dict[str, str] = {
     # NB: no bare "water" alias — it fuzzy-matches "weather" at 0.83, above the
     # 0.72 accept threshold, producing a false match on "nice weather today".
     "drinking water": "WATER-1-5L", "bottled water": "WATER-1-5L", "水": "WATER-1-5L",
+    # Phase 5c (repo owner decision): generic beverage requests resolve to
+    # bottled water for now rather than a catalogue gap -- the charity does
+    # stock something drinkable, even though nobody asked for water
+    # specifically. A more SPECIFIC unstocked drink (e.g. "milo", "juice")
+    # deliberately stays unaliased here so it still surfaces as its own gap
+    # in the unmet-needs aggregation instead of silently matching water too.
+    # NB: no bare "drink" alias -- fuzzy-matches "durian" at 0.73, above the
+    # 0.72 accept threshold, producing a false match on "fresh durian please"
+    # (caught by the existing golden case for that exact phrase). "drinks"
+    # is what people actually say anyway, and doesn't have this collision.
+    "drinks": "WATER-1-5L", "beverages": "WATER-1-5L",
     # hygiene / household
     "soap": "HYGIENE-SOAP-4PK", "肥皂": "HYGIENE-SOAP-4PK", "sabun": "HYGIENE-SOAP-4PK",
     "shampoo": "SHAMPOO-500ML", "洗发水": "SHAMPOO-500ML", "syampu": "SHAMPOO-500ML",
