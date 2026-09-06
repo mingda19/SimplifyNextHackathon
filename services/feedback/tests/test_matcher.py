@@ -247,6 +247,29 @@ GOLDEN_CASES = [
         "OIL-2L",
         "low_fat",
     ),
+    # --- Phase 6: found live via the deployed unmet-needs dashboard -- the
+    # word "for" (extremely common: "X for my mother", "Y for elderly...")
+    # fuzzy-matches "flour" at ratio 0.75 (SequenceMatcher("for","flour")),
+    # above the 0.72 threshold, and both start with 'f' so the first-char
+    # gate does not help. Six completely unrelated unmet-needs (protein,
+    # blanket, mattress, raincoat, glasses, school shoes) all false-matched
+    # FLOUR-1KG in the live aggregation because their need-descriptions all
+    # contained "for". This is far more severe than the earlier residual
+    # false positives (race/bead/beams/milk-flower): "for" is one of the
+    # most common words in English, not an edge case. ---
+    ("'for' alone must never match flour", "for", None, None, None),
+    (
+        "'for' inside a realistic need description -> no false match",
+        "protein source appropriate for elderly with dental issues",
+        None, None, None,
+    ),
+    (
+        "'for' inside another realistic phrase -> no false match",
+        "blanket for warmth at night",
+        None, None, None,
+    ),
+    # Legitimate flour requests/typos must still work.
+    ("legitimate 'flour' request still works", "need some flour", "FLOUR-1KG", None, None),
 ]
 
 

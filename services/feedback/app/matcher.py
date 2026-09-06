@@ -217,9 +217,27 @@ def _alias_present(alias: str, normalized_text: str) -> bool:
     return re.search(rf"\b{re.escape(alias)}\b", normalized_text) is not None
 
 
+# Phase 6: found live via the deployed unmet-needs dashboard. "for" fuzzy-
+# matches "flour" at ratio 0.75 (SequenceMatcher("for", "flour")) -- above
+# threshold, and both start with 'f' so the first-char gate doesn't help.
+# Six unrelated needs (protein, blanket, mattress, raincoat, glasses, school
+# shoes) all false-matched FLOUR-1KG in production because their need
+# descriptions all happened to contain "for". Unlike the earlier residual
+# false positives (race/bead/beams), "for" is one of the most common words
+# in English -- not an edge case. A genuine product mention is never a bare
+# function word, so these are excluded from fuzzy candidacy entirely (they
+# can still appear inside a longer n-gram; only the bare unigram is dropped).
+_FUZZY_STOPWORDS = {
+    "a", "an", "the", "for", "of", "to", "and", "or", "my", "our", "your",
+    "his", "her", "their", "some", "more", "no", "not", "any", "is", "are",
+    "was", "were", "be", "with", "at", "in", "on", "please", "need", "needs",
+    "needed", "want", "wants", "want", "can", "cannot",
+}
+
+
 def _match_fuzzy(normalized_text: str) -> Optional[tuple[str, float]]:
     tokens = re.findall(r"[a-z]+", normalized_text)
-    ngrams = set(tokens)
+    ngrams = {t for t in tokens if t not in _FUZZY_STOPWORDS}
     for size in (2, 3):
         for i in range(len(tokens) - size + 1):
             ngrams.add(" ".join(tokens[i : i + size]))
