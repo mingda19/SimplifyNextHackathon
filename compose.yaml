@@ -81,6 +81,8 @@ services:
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
+    env_file:
+      - .env
     environment:
       <<: *service-env
       FAKE_SERVICES: "0"
@@ -91,6 +93,7 @@ services:
       LEDGER_PATH: /data/spend.json
     volumes:
       - orchestrator_data:/data
+      - ~/.aws:/root/.aws:ro
     ports: ["127.0.0.1:8003:8003"]
     depends_on:
       schema-bootstrap:
