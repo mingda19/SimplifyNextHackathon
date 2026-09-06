@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -18,6 +18,8 @@ from app.schemas import (
     ItemDetailResponse,
     ItemResponse,
     ItemUpdate,
+    ReceiptRequest,
+    LotResponse,
 )
 from app.services import alerts as alert_service
 from app.services import inventory as inventory_service
@@ -103,10 +105,26 @@ def post_allocation(
     sku: Identifier,
     payload: AllocationRequest,
     db: DatabaseSession,
+    idempotency_key: Annotated[str | None, Header(min_length=1, max_length=200)] = None,
 ) -> AllocationResponse:
     """Allocate a positive quantity from one selected lot."""
 
-    return inventory_service.allocate_lot(db, sku=sku, payload=payload)
+    return inventory_service.allocate_lot(db, sku=sku, payload=payload,
+                                           idempotency_key=idempotency_key)
+
+
+@router.post("/{sku}/allocate/validate", response_model=AllocationResponse,
+             responses=_errors(404, 409, 410, 422))
+def validate_allocation(sku: Identifier, payload: AllocationRequest, db: DatabaseSession):
+    return inventory_service.allocate_lot(db, sku=sku, payload=payload, validate_only=True)
+
+
+@router.post("/{sku}/receive", response_model=LotResponse, status_code=201,
+             responses=_errors(404, 409, 422))
+def receive_stock(sku: Identifier, payload: ReceiptRequest, db: DatabaseSession,
+                  idempotency_key: Annotated[str | None, Header(min_length=1, max_length=200)] = None):
+    return inventory_service.receive_stock(db, sku=sku, payload=payload,
+                                           idempotency_key=idempotency_key)
 
 
 @router.get(

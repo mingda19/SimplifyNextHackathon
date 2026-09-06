@@ -19,19 +19,21 @@ import os
 import re
 import threading
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Literal, Optional
 
 import psycopg2
 import psycopg2.extras
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, Depends, FastAPI, HTTPException, Query
+from pantry_common.security import require_charity
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.types import Command
 
 from orchestrator.config import settings
 from orchestrator.graph import compile_graph
 from orchestrator.nodes.approval import build_summary
-from orchestrator.state import new_state
+from orchestrator.state import APPROVAL_VERSION, new_state
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator.api")
@@ -62,9 +64,15 @@ def _graph():
     return _GRAPH
 
 
+@contextmanager
 def _conn():
     dsn = _DIALECT.sub("postgresql://", os.getenv("DATABASE_URL", ""))
-    return psycopg2.connect(dsn)
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _sql(query: str, params: tuple = (), fetch: str | None = None):
@@ -84,9 +92,10 @@ def _jsonable(x: Any) -> Any:
 
 def _run_graph(thread_id: str, charity_type: str) -> None:
     """Execute until the approval interrupt, then park the summary."""
+    graph = None
     try:
-        graph = _graph()
-        cfg = {"configurable": {"thread_id": thread_id}}
+        graph = compile_graph()
+        cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 256}
         result = graph.invoke(new_state(thread_id, charity_type), cfg)
         if "__interrupt__" in result:
             summary = _jsonable(result["__interrupt__"][0].value)
@@ -94,9 +103,12 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
                     WHERE thread_id=%s""",
                  (psycopg2.extras.Json(summary), thread_id))
             logger.info("run %s paused for approval", thread_id)
+        elif result.get("halt_reason"):
+            _sql("UPDATE agent.runs SET status='failed', error=%s, summary=%s WHERE thread_id=%s",
+                 (result["halt_reason"], psycopg2.extras.Json(_jsonable(build_summary(result))), thread_id))
         else:
             # No interrupt: the graph ended without anything to approve.
-            _sql("""UPDATE agent.runs SET status='approved', summary=%s, outcome=%s,
+            _sql("""UPDATE agent.runs SET status='completed', summary=%s, outcome=%s,
                     decided_at=now(), decided_by='auto (nothing to approve)'
                     WHERE thread_id=%s""",
                  (psycopg2.extras.Json(_jsonable(build_summary(result))),
@@ -105,6 +117,10 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
         logger.exception("run %s failed", thread_id)
         _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
+
+    finally:
+        if graph is not None:
+            graph.checkpointer.conn.close()
 
 
 @app.get("/health")
@@ -117,9 +133,17 @@ def health():
         return {"status": "degraded", "detail": str(exc)}
 
 
+class RunRequest(BaseModel):
+    charity_type: Literal["A", "B"] = "B"
+
+
+class DecisionRequest(BaseModel):
+    decision: Literal["approved", "rejected"]
+
+
 @app.post("/agent/runs", status_code=202)
-def start_run(payload: dict = Body(default={})):
-    charity_type = (payload or {}).get("charity_type", "B")
+def start_run(payload: RunRequest = Body(default=RunRequest()), user: dict = Depends(require_charity)):
+    charity_type = payload.charity_type
     if charity_type not in ("A", "B"):
         raise HTTPException(400, "charity_type must be 'A' or 'B'")
     thread_id = f"run-{uuid.uuid4().hex[:10]}"
@@ -131,9 +155,10 @@ def start_run(payload: dict = Body(default={})):
 
 
 @app.get("/agent/runs")
-def list_runs(status: Optional[str] = None, limit: int = 50):
+def list_runs(status: Optional[str] = None, limit: int = Query(50, ge=1, le=200),
+              user: dict = Depends(require_charity)):
     q = """SELECT thread_id, charity_type, status, summary, outcome, error,
-                  created_at, decided_at, decided_by
+                  created_at, decided_at, decided_by, decision
            FROM agent.runs {where} ORDER BY created_at DESC LIMIT %s"""
     if status:
         return _sql(q.format(where="WHERE status=%s"), (status, limit), fetch="all")
@@ -141,9 +166,9 @@ def list_runs(status: Optional[str] = None, limit: int = 50):
 
 
 @app.get("/agent/runs/{thread_id}")
-def get_run(thread_id: str):
+def get_run(thread_id: str, user: dict = Depends(require_charity)):
     row = _sql("""SELECT thread_id, charity_type, status, summary, outcome, error,
-                         created_at, decided_at, decided_by
+                         created_at, decided_at, decided_by, decision
                   FROM agent.runs WHERE thread_id=%s""", (thread_id,), fetch="one")
     if not row:
         raise HTTPException(404, "no such run")
@@ -164,11 +189,17 @@ def decide(thread_id: str, payload: dict = Body(...)):
                                  "or send approved_steps")
     who = payload.get("decided_by") or "unknown"
 
-    row = _sql("SELECT status FROM agent.runs WHERE thread_id=%s",
-               (thread_id,), fetch="one")
+
+def _decide_locked(thread_id: str, decision: str, user: dict):
+    who = user["sub"]
+    row = _sql("SELECT * FROM agent.runs WHERE thread_id=%s", (thread_id,), fetch="one")
     if not row:
         raise HTTPException(404, "no such run")
-    if row["status"] != "pending_approval":
+    retrying = row["status"] == "committing"
+    if retrying:
+        if row.get("decision") != decision or row.get("decided_by_id") != who:
+            raise HTTPException(409, "only the original approver can retry this decision")
+    elif row["status"] != "pending_approval":
         raise HTTPException(409, f"run is '{row['status']}', not awaiting approval")
 
     graph = _graph()

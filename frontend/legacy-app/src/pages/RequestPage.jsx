@@ -86,13 +86,18 @@ export default function RequestPage() {
     setBusy(true); setErr('')
     try {
       if (recording) { recog.current?.stop(); setRecording(false) }
+      const participantKey = `pantry.participant.${token}`
+      let participant = token ? localStorage.getItem(participantKey) : null
+      if (token && !participant) {
+        participant = crypto.randomUUID()
+        localStorage.setItem(participantKey, participant)
+      }
       await api.submitFeedback({
-        beneficiary_id: user?.beneficiary_id || `LINK-${token || 'WEB'}`,
+        ...(token ? { request_link: token, beneficiary_id: participant } : {}),
         text: text.trim(),
         lang,
         channel: recording ? 'voice' : 'web',
       })
-      if (token) api.markLinkUsed(token).catch(() => {})
       setSent(true); setText('')
     } catch (ex) {
       setErr(ex.offline ? 'We could not send that just now. Please try again shortly.' : ex.message)

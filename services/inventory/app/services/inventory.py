@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from uuid import uuid4
 
 from fastapi import status
 from sqlalchemy import func, select
@@ -25,8 +26,11 @@ from app.schemas import (
     ItemResponse,
     ItemUpdate,
     LotResponse,
+    ReceiptRequest,
+    MAX_QUANTITY,
 )
 from app.services.alerts import calculate_days_cover
+from app.services import idempotency
 
 
 def _item_not_found(sku: str) -> NotFoundError:
@@ -118,8 +122,13 @@ def create_item(db: Session, payload: ItemCreate) -> ItemResponse:
         )
 
     _validate_preferred_vendor(db, payload.preferred_vendor_id)
-    item = Item(**payload.model_dump())
+    item = Item(**payload.model_dump(exclude={"opening_expiry_date", "opening_source"}))
     db.add(item)
+    if payload.on_hand:
+        db.add(Lot(lot_id=f"LOT-{uuid4().hex.upper()}", sku=payload.sku,
+                   qty=payload.on_hand, expiry_date=payload.opening_expiry_date,
+                   source=payload.opening_source.value,
+                   received_at=datetime.now(timezone.utc)))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -139,11 +148,16 @@ def create_item(db: Session, payload: ItemCreate) -> ItemResponse:
 def update_item(db: Session, sku: str, payload: ItemUpdate) -> ItemResponse:
     """Apply and commit a partial update without changing the item's SKU."""
 
-    item = db.get(Item, sku)
+    item = db.scalar(select(Item).where(Item.sku == sku).with_for_update())
     if item is None:
         raise _item_not_found(sku)
 
     changes = payload.changes()
+    if "on_hand" in changes and changes["on_hand"] != item.on_hand:
+        raise DomainError(status_code=422, code="VALIDATION_ERROR",
+                          message="Stock changes must be recorded against a lot.",
+                          remedy_hint="Use /receive for incoming stock or /allocate for outgoing stock.",
+                          alternatives=[{"action": "receive", "path": f"/inventory/{sku}/receive"}])
     if "preferred_vendor_id" in changes:
         _validate_preferred_vendor(db, changes["preferred_vendor_id"])
     for field_name, value in changes.items():
@@ -237,9 +251,16 @@ def allocate_lot(
     sku: str,
     payload: AllocationRequest,
     as_of: date | None = None,
+    validate_only: bool = False,
+    idempotency_key: str | None = None,
 ) -> AllocationResponse:
     """Atomically allocate stock from one explicit, non-expired lot."""
 
+    request = {"action": "allocate", "sku": sku, **payload.model_dump(mode="json")}
+    if not validate_only:
+        previous = idempotency.replay(db, idempotency_key, request)
+        if previous is not None:
+            return AllocationResponse.model_validate(previous)
     today = as_of if as_of is not None else datetime.now(timezone.utc).date()
     item = db.scalar(select(Item).where(Item.sku == sku).with_for_update())
     if item is None:
@@ -279,8 +300,12 @@ def allocate_lot(
             alternatives=alternatives,
         )
 
+    result = AllocationResponse(sku=sku, lot_id=lot.lot_id, qty=payload.qty)
+    if validate_only:
+        return result
     lot.qty -= payload.qty
     item.on_hand -= payload.qty
+    idempotency.record(db, idempotency_key, request, result.model_dump(mode="json"))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -293,7 +318,31 @@ def allocate_lot(
             alternatives=[{"action": "get_item", "path": f"/inventory/{sku}"}],
         ) from exc
 
-    return AllocationResponse(sku=sku, lot_id=lot.lot_id, qty=payload.qty)
+    return result
+
+
+def receive_stock(db: Session, *, sku: str, payload: ReceiptRequest,
+                  idempotency_key: str | None = None) -> LotResponse:
+    request = {"action": "receive", "sku": sku, **payload.model_dump(mode="json")}
+    previous = idempotency.replay(db, idempotency_key, request)
+    if previous is not None:
+        return LotResponse.model_validate(previous)
+    item = db.scalar(select(Item).where(Item.sku == sku).with_for_update())
+    if item is None:
+        raise _item_not_found(sku)
+    if item.on_hand + payload.qty > MAX_QUANTITY:
+        raise DomainError(status_code=422, code="VALIDATION_ERROR",
+                          message="Receipt would exceed the maximum stock quantity.",
+                          remedy_hint="Reduce the receipt quantity.")
+    lot = Lot(lot_id=f"LOT-{uuid4().hex.upper()}", sku=sku, qty=payload.qty,
+              expiry_date=payload.expiry_date, source=payload.source.value,
+              received_at=datetime.now(timezone.utc))
+    db.add(lot)
+    item.on_hand += payload.qty
+    result = LotResponse.model_validate(lot)
+    idempotency.record(db, idempotency_key, request, result.model_dump(mode="json"))
+    db.commit()
+    return result
 
 
 __all__ = [
@@ -303,4 +352,5 @@ __all__ = [
     "get_item_detail",
     "list_items",
     "update_item",
+    "receive_stock",
 ]

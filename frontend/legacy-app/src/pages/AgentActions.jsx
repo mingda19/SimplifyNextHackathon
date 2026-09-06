@@ -6,6 +6,8 @@ import { ItemEditor } from './Stock'
 
 const STATUS = {
   running:          { kind: 'mute',   label: 'running' },
+  committing:       { kind: 'warn',   label: 'decision in progress' },
+  completed:        { kind: 'ok',     label: 'no action needed' },
   pending_approval: { kind: 'warn',   label: 'needs your approval' },
   approved:         { kind: 'ok',     label: 'approved' },
   rejected:         { kind: 'mute',   label: 'rejected' },
@@ -20,6 +22,7 @@ export default function AgentActions() {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [creatingSku, setCreatingSku] = useState(null)
+  const [charityType, setCharityType] = useState('B')
 
   const load = () => api.runs().then(r => { setRuns(r); setErr(null) }).catch(setErr)
   useEffect(() => {
@@ -31,7 +34,7 @@ export default function AgentActions() {
 
   const start = async () => {
     setBusy(true); setNote('')
-    try { await api.startRun('B'); setNote('Agent run started — it will appear below when it needs you.'); load() }
+    try { await api.startRun(charityType); setNote('Agent run started — it will appear below when it needs you.'); load() }
     catch (ex) { setNote(''); setErr(ex) } finally { setBusy(false) }
   }
 
@@ -67,9 +70,15 @@ export default function AgentActions() {
             Nothing is committed until you approve it.
           </p>
         </div>
+        <div className="row">
+        <select aria-label="Funding type" value={charityType} onChange={e => setCharityType(e.target.value)}>
+          <option value="B">Budget funded — purchase orders</option>
+          <option value="A">Donation fed — checklist</option>
+        </select>
         <button className="btn-primary" onClick={start} disabled={busy}>
           {busy ? 'Working…' : 'Run agent now'}
         </button>
+        </div>
       </div>
 
       <Banner kind="ok">{note}</Banner>
@@ -134,6 +143,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const s = run.summary || {}
   const { sensed = {}, predicted = {}, queued = {}, adaptations = [], guardrails = {} } = s
   const pending = run.status === 'pending_approval'
+  const legacy = s.approval_version !== 2
 
   // Everything starts ticked — the agent's plan is the default, and the human
   // subtracts from it rather than assembling it line by line.
@@ -156,6 +166,9 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
         </div>
 
         {guardrails.halt_reason && <Banner kind="err">{guardrails.halt_reason}</Banner>}
+        {pending && legacy && <Banner kind="err">This is an older plan. Review existing orders and start a new run before approving.</Banner>}
+        {run.error && <Banner kind="err">{run.error}</Banner>}
+        {guardrails.exceeds_monthly_budget && <Banner kind="err">This plan exceeds the monthly budget and needs revision.</Banner>}
         {guardrails.exceeds_single_order_cap && (
           <div className="banner banner-warn">
             This order exceeds the single-order cap of S${guardrails.baselines?.max_single_order_sgd}.
@@ -241,7 +254,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
 
         <h3>Adaptations it had to make</h3>
         {adaptations.length === 0 ? (
-          <p className="muted small">None — the plan executed first try.</p>
+          <p className="muted small">None — validation succeeded on the first try.</p>
         ) : adaptations.map((a, i) => (
           <div key={i} className="card" style={{ background: 'var(--accent-soft)', borderColor: '#bcd9c9', marginBottom: 8 }}>
             <div className="small" style={{ fontWeight: 600 }}>
@@ -252,6 +265,20 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
           </div>
         ))}
 
+        <h3>Node trace</h3>
+        {['sense', 'predict', 'act', 'adapt', 'approval', 'commit'].map(node => (
+          <details key={node} style={{ marginBottom: 8 }}>
+            <summary>{node}</summary>
+            <pre className="small" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+              {JSON.stringify((s.trace || []).filter(t => t.node === node), null, 2)}
+            </pre>
+          </details>
+        ))}
+        {run.outcome && <details><summary>Outcome</summary>
+          <pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(run.outcome, null, 2)}</pre>
+        </details>}
+        {run.status === 'committing' && <button disabled={busy}
+          onClick={() => onDecide(run.thread_id, run.decision)}>Retry interrupted decision</button>}
         {pending ? (
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
             <button className="btn-danger" disabled={busy}
@@ -267,7 +294,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
         ) : (
           <p className="muted small" style={{ marginTop: 16 }}>
             {run.status === 'approved' ? `Approved by ${run.decided_by || 'someone'}.`
-              : run.status === 'rejected' ? 'Rejected — nothing was committed.' : ''}
+              : run.status === 'rejected' ? 'Plan rejected.' : ''}
           </p>
         )}
       </div>

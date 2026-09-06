@@ -1,6 +1,8 @@
 """FastAPI application entry point."""
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pantry_common.security import require_operator
 
 from app import __version__
 from app.config import get_settings
@@ -18,6 +20,14 @@ app = FastAPI(
     version=__version__,
     description="Inventory system of record for the SimplifyNext prototype.",
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, change this to your frontend URL
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 install_error_handlers(app)
 app.include_router(inventory_router)
 app.include_router(orders_router)

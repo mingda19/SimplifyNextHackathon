@@ -37,7 +37,11 @@ import dataset as D
 import xgboost_model as X
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]
+# Two levels up from the local source tree (services/price_forecaster/forecast.py).
+# The Docker image copies this service flat into /app with no repo root above
+# it, so fall back to HERE there -- load_dotenv below is then a silent no-op
+# and Compose's own `environment:` block is the config source instead.
+REPO_ROOT = HERE.parents[1] if len(HERE.parents) > 1 else HERE
 
 # The root .env is the single control point for the whole project. Without this
 # the gate could only be changed by editing source, and a teammate setting
@@ -231,7 +235,12 @@ def forecast(series: str, horizon_months: int = HORIZON) -> dict[str, Any]:
             f"carries only {conf:.0%} directional confidence, below the "
             f"{CONFIDENCE_GATE:.0%} gate. No timing signal — order on stock need.")
 
-    cal = st["calibration"].get("realised", {})
+    calibration = st["calibration"]
+    cal = calibration.get("realised_by_gate", {}).get(f"{CONFIDENCE_GATE:.2f}",
+                                                        calibration.get("realised", {}))
+    threshold = calibration.get("confidence_thresholds", {}).get(f"{CONFIDENCE_GATE:.2f}")
+    matches_gate = threshold is not None and all(
+        cal.get(split, {}).get("threshold") == threshold for split in ("val", "test"))
     return {
         # -- contract the orchestrator's sense node reads ------------------
         "series": col,
@@ -255,10 +264,13 @@ def forecast(series: str, horizon_months: int = HORIZON) -> dict[str, Any]:
             "calibrated_on": "validation (312 obs)",
         },
         "calibration": {
-            "val_dir_acc_at_gate": cal.get("val", {}).get("dir_acc"),
-            "test_dir_acc_at_gate": cal.get("test", {}).get("dir_acc"),
-            "test_n_at_gate": cal.get("test", {}).get("n"),
+            "val_dir_acc_at_gate": cal.get("val", {}).get("dir_acc") if matches_gate else None,
+            "test_dir_acc_at_gate": cal.get("test", {}).get("dir_acc") if matches_gate else None,
+            "test_n_at_gate": cal.get("test", {}).get("n") if matches_gate else None,
             "ungated_test_dir_acc": cal.get("ungated_test_dir_acc"),
+            "statistics_available_at_gate": matches_gate,
+            "magnitude_threshold_at_gate": threshold,
+            "measured_magnitude_threshold": cal.get("test", {}).get("threshold"),
             "warning": ("confidence is a calibrated estimate from validation, "
                         "not a measured guarantee; held-out support at this "
                         "gate is thin"),

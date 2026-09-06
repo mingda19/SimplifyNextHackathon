@@ -59,6 +59,8 @@ def _item_payload(sku: str, *, category: str = "Staples", on_hand: int = 20) -> 
         "category": category,
         "unit": "pack",
         "on_hand": on_hand,
+        "opening_expiry_date": "2099-01-01",
+        "opening_source": "DONATED",
         "reorder_point": 10,
         "avg_daily_draw": 2,
         "unit_cost_sgd": 3.25,
@@ -99,13 +101,15 @@ def test_crud_filters_and_detail_contract(inventory_api) -> None:  # type: ignor
 
     detail = client.get("/inventory/SKU-B")
     assert detail.status_code == 200
-    assert detail.json()["lots"] == []
+    assert sum(lot["qty"] for lot in detail.json()["lots"]) == 8
     assert detail.json()["days_cover"] == 2.0
 
-    deleted = client.delete("/inventory/SKU-A")
+    assert client.delete("/inventory/SKU-A").status_code == 409
+    assert client.post("/inventory", json=_item_payload("SKU-EMPTY", on_hand=0)).status_code == 201
+    deleted = client.delete("/inventory/SKU-EMPTY")
     assert deleted.status_code == 204
     assert deleted.content == b""
-    assert client.get("/inventory/SKU-A").status_code == 404
+    assert client.get("/inventory/SKU-EMPTY").status_code == 404
 
 
 def test_create_duplicate_and_unknown_vendor_use_standard_errors(inventory_api) -> None:  # type: ignore[no-untyped-def]
@@ -282,3 +286,34 @@ def test_inventory_openapi_declares_expired_lot_error(inventory_api) -> None:  #
         allocation_responses["410"]["content"]["application/json"]["schema"]["$ref"]
         == "#/components/schemas/DomainErrorResponse"
     )
+
+
+def test_receipt_and_allocation_replay_survive_new_sessions(inventory_api):
+    client, factory = inventory_api
+    assert client.post('/inventory', json=_item_payload('RECEIPT', on_hand=0)).status_code == 201
+    receipt = {'qty': 10, 'expiry_date': '2099-01-01', 'source': 'DONATED'}
+    headers = {'Idempotency-Key': 'receipt-1'}
+    first = client.post('/inventory/RECEIPT/receive', json=receipt, headers=headers)
+    assert first.status_code == 201, first.text
+    second = client.post('/inventory/RECEIPT/receive', json=receipt, headers=headers)
+    assert second.json() == first.json()
+    assert client.get('/inventory/RECEIPT').json()['on_hand'] == 10
+    assert client.post('/inventory/RECEIPT/receive', json={**receipt, 'qty': 11}, headers=headers).status_code == 409
+    allocation = {'lot_id': first.json()['lot_id'], 'qty': 4}
+    assert client.post('/inventory/RECEIPT/allocate/validate', json=allocation).status_code == 200
+    assert client.get('/inventory/RECEIPT').json()['on_hand'] == 10
+    for _ in range(2):
+        assert client.post('/inventory/RECEIPT/allocate', json=allocation,
+                           headers={'Idempotency-Key': 'allocation-1'}).status_code == 200
+    detail = client.get('/inventory/RECEIPT').json()
+    assert detail['on_hand'] == detail['lots'][0]['qty'] == 6
+
+
+def test_receipt_overflow_leaves_stock_unchanged(inventory_api):
+    client, factory = inventory_api
+    assert client.post('/inventory', json=_item_payload('MAX-STOCK', on_hand=2**31-1)).status_code == 201
+    response = client.post('/inventory/MAX-STOCK/receive', json={
+        'qty': 1, 'expiry_date': '2099-01-01', 'source': 'PURCHASED'})
+    assert response.status_code == 422
+    detail = client.get('/inventory/MAX-STOCK').json()
+    assert detail['on_hand'] == 2**31-1 and len(detail['lots']) == 1

@@ -1,22 +1,35 @@
-"""
-PHASE 4b — final execution.  No LLM. Cost: $0.
-
-Runs only after approval. Idempotent: keyed on thread_id + step index so an
-approval double-click cannot place two orders.
-"""
+"""Execute exactly the staged, approved actions using durable backend keys."""
 from __future__ import annotations
 
-import logging
+from decimal import Decimal
 from typing import Any
 
 from .. import services
-from ..state import AgentState, Plan
+from ..config import BASELINES
+from ..state import APPROVAL_VERSION, AgentState, Plan, PlanStep
 
-log = logging.getLogger(__name__)
 
-# Process-local idempotency guard. A real deployment would persist this
-# alongside the checkpoint.
-_COMMITTED: set[str] = set()
+def _checklist(state: AgentState, staged: list[dict]) -> dict:
+    world = state.get("state_of_world", {})
+    stock = {i["sku"]: i for i in world.get("inventory") or []}
+    needs = (world.get("unmet_needs") or {}).get("ranked", [])
+    items = []
+    for entry in staged:
+        step = entry["step"]
+        if step["action"] == "flag_for_human":
+            continue
+        item = stock.get(step["sku"], {})
+        draw = item.get("avg_daily_draw", 0)
+        cover = item.get("on_hand", 0) / draw if draw else BASELINES["min_days_cover"]
+        shortfall = max(0, BASELINES["min_days_cover"] - cover)
+        urgency = max((n.get("urgency", 0) for n in needs
+                       if step["sku"] in n.get("mentioned_skus", [])), default=0)
+        items.append({"sku": step["sku"], "qty": step["qty"], "why": step.get("rationale", ""),
+                      "urgency": urgency, "days_cover_shortfall": shortfall,
+                      "priority_score": urgency * shortfall})
+    items.sort(key=lambda i: (-i["priority_score"], i["sku"]))
+    return {"kind": "acquisition_checklist", "items": items,
+            "review_flags": [s["step"] for s in staged if s["step"]["action"] == "flag_for_human"]}
 
 
 def _line_value(result: dict[str, Any]) -> float:
@@ -30,10 +43,17 @@ def _line_value(result: dict[str, Any]) -> float:
 
 
 def commit(state: AgentState) -> dict[str, Any]:
-    thread_id = state.get("thread_id", "unknown")
-    charity_type = state.get("charity_type", "B")
+    if state.get("approval_version") != APPROVAL_VERSION:
+        return {"halt_reason": "Legacy approval: review existing orders and start a new run."}
+    if state.get("approval") != "approved" or state.get("halt_reason"):
+        return {"halt_reason": state.get("halt_reason") or "Human approval is required before commit."}
+    if not state.get("thread_id"):
+        raise ValueError("commit requires a durable thread_id")
     staged = state.get("staged", [])
     plan = Plan.model_validate(state["plan"]) if state.get("plan") else None
+    if state.get("charity_type", "B") == "A":
+        return {"outcome": _checklist(state, staged),
+                "attempts": [{"node": "commit", "ok": True, "kind": "acquisition_checklist"}]}
 
     # Only the steps the human actually ticked. None means "whole plan"
     # (older callers / the CLI); an empty list means nothing was approved.
@@ -124,6 +144,14 @@ def commit(state: AgentState) -> dict[str, Any]:
              outcome["kind"], len(committed), len(declined), len(skipped),
              resolution.get("resolved", 0))
 
+    orders = [entry for entry in committed if entry["type"] == "order"]
+    outcome = {"kind": "commit_failed" if failure else "purchase_order",
+               "orders": orders, "allocations": [c for c in committed if c["type"] == "allocation"],
+               "total_sgd": float(sum((services.total_sgd(o["result"]) for o in orders), Decimal(0))),
+               "timing_rationale": (state.get("state_of_world", {}).get("price_forecast") or {}).get(
+                   "rationale", plan.reasoning if plan else ""),
+               "review_flags": [s["step"] for s in staged if s["step"]["action"] == "flag_for_human"],
+               "failure": failure}
     return {"outcome": outcome,
             "attempts": [{"node": "commit", "ok": True, "kind": outcome["kind"],
                           "committed": len(committed), "declined": len(declined),

@@ -1,0 +1,9 @@
+-r ../../services/inventory/requirements.txt
+-r ../../services/auth/requirements.txt
+-r ../../services/orchestrator/requirements.txt
+-e .
+PyYAML>=6,<7
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+xgboost>=2.1

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -51,7 +52,7 @@ def route_after_adapt(state: AgentState) -> str:
 
 
 def route_after_approval(state: AgentState) -> str:
-    return "commit" if state.get("approval") == "approved" else END
+    return "commit" if state.get("approval") == "approved" and not state.get("halt_reason") else END
 
 
 # ------------------------------------------------------------------- build --
@@ -86,6 +87,8 @@ def make_checkpointer(path: str | None = None) -> SqliteSaver:
     context manager and would close the saver on exit.
     """
     target = path or str(settings.checkpoint_path)
+    if target != ":memory:":
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(target, check_same_thread=False)
     return SqliteSaver(conn)
 
