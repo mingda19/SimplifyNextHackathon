@@ -9,10 +9,22 @@ export default function Feedback() {
   const [err, setErr] = useState(null)
   const [tab, setTab] = useState('needs')
 
+  // POST /feedback returns 202 before extraction runs -- a message submitted
+  // seconds ago can still be sitting at extraction_status='pending'. Without
+  // a poll here, a staff member watching this screen right after a
+  // beneficiary submits sees a row with blank urgency/matched fields and no
+  // way to tell "still processing" from "processed, nothing to report" --
+  // and no way to ever see it resolve short of a manual page reload.
   useEffect(() => {
-    api.unmetNeeds().then(setNeeds).catch(setErr)
-    api.feedback().then(r => setEntries(Array.isArray(r) ? r : [])).catch(() => {})
-    api.feedbackMetrics().then(setMetrics).catch(() => {})
+    let alive = true
+    const poll = () => {
+      api.unmetNeeds().then(r => alive && setNeeds(r)).catch(r => alive && setErr(r))
+      api.feedback().then(r => alive && setEntries(Array.isArray(r) ? r : [])).catch(() => {})
+      api.feedbackMetrics().then(r => alive && setMetrics(r)).catch(() => {})
+    }
+    poll()
+    const id = setInterval(poll, 5000)
+    return () => { alive = false; clearInterval(id) }
   }, [])
 
   if (err) return <><h1>Beneficiary needs</h1><ServiceDown name="Feedback service" error={err} /></>
@@ -98,9 +110,17 @@ export default function Feedback() {
                       {e.summary_en && e.detected_lang !== 'en' &&
                         <div className="muted small" style={{ marginTop: 4 }}>{e.summary_en}</div>}
                     </td>
-                    <td>{e.urgency ? <Pill kind={e.urgency >= 4 ? 'danger' : e.urgency === 3 ? 'warn' : 'mute'}>
-                      {e.urgency}</Pill> : <span className="muted">—</span>}</td>
-                    <td className="small mono">{(e.mentioned_skus || []).join(', ') || <span className="muted">—</span>}</td>
+                    {e.extraction_status === 'pending' ? (
+                      <td colSpan={2}><Pill kind="warn">processing…</Pill></td>
+                    ) : e.extraction_status === 'failed' ? (
+                      <td colSpan={2}><Pill kind="danger">extraction failed</Pill></td>
+                    ) : (
+                      <>
+                        <td>{e.urgency ? <Pill kind={e.urgency >= 4 ? 'danger' : e.urgency === 3 ? 'warn' : 'mute'}>
+                          {e.urgency}</Pill> : <span className="muted">—</span>}</td>
+                        <td className="small mono">{(e.mentioned_skus || []).join(', ') || <span className="muted">—</span>}</td>
+                      </>
+                    )}
                     <td className="muted small">{new Date(e.received_at).toLocaleDateString()}</td>
                   </tr>
                 ))}
