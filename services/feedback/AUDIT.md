@@ -65,6 +65,14 @@ Two of 42 rows (4.8%) in this same batch failed outright with `[WinError 5] Acce
 
 Also fixed along the way (found while writing `smoke_real.py`, a client-side issue not a service bug): Windows resolves `localhost` to IPv6 first, and the connection attempt times out before falling back to IPv4 — costs ~2 seconds per request on this machine. Both scripts default to `127.0.0.1` instead. Worth knowing if anyone else demos from a Windows laptop and sees mysteriously slow requests against `localhost` URLs.
 
+### Phase 6 update: 202 extraction gap in the beneficiary-needs dashboard, and the fallback drill
+
+**202 gap.** `POST /feedback` returns before extraction runs. The beneficiary-facing form (`frontend/app/src/pages/RequestPage.jsx`) already handles this correctly by construction — it only ever confirms receipt ("Thank you — we have received your message"), never claims processing finished. The staff dashboard (`frontend/app/src/pages/Feedback.jsx`) did not: a just-submitted row rendered with blank urgency/matched cells, identical to a fully-processed row that genuinely matched nothing, and the page never refetched on its own so a row could sit looking broken indefinitely. Fixed by branching the Messages table on the real `extraction_status` field (`pending` → a "processing…" pill, `failed` → a "extraction failed" pill) and polling every 5s. Verified live: `POST /feedback` → immediate `extraction_status:"pending"`, `urgency:null` → flips to `"done"` with real values 2-3s later (confirmed by direct API polling, not just code inspection — see commit `fe73a6c`). No frontend test harness exists in this repo (no vitest/jest/test script), so this was verified live rather than red/green.
+
+**Fallback drill** (`FAKE_LLM=1`, restart feedback, confirm the dashboard still renders from Postgres): PASS. With `fake_llm:true`, `GET /feedback/unmet-needs` still returned all 131 ranked needs / 45 gaps from the existing 190 analysed messages, `GET /metrics` still reported the full historical rates. A new submission under fake mode extracted instantly via the canned fixture (`extraction_status:"done"` within ~1s) without error — confirming a mid-demo AWS/Bedrock outage degrades to "new submissions get canned extraction" rather than breaking the dashboard or losing data. Reverted to `FAKE_LLM=0` and restarted afterward; `/health` confirms `fake_llm:false` and the entry count is unchanged (192).
+
+This closes every item in the Phase 6 task table.
+
 ---
 
 ## Detail
