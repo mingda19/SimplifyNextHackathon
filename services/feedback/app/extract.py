@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
 from app.matcher import match_term
@@ -183,7 +183,15 @@ def run_extraction(text: str, lang: Optional[str]) -> tuple[Extraction, bool]:
     try:
         extraction = _extract_once(text, lang, previous_error=None)
         return extraction, True
-    except Exception as first_error:  # noqa: BLE001 -- any parse/validation failure retries once
+    except ValidationError as first_error:
+        # Only a genuine schema/parse failure gets the "fix your validation
+        # error" retry -- anything else (429, auth, timeout, 5xx) propagates
+        # immediately. Retrying those with a validation-error message is
+        # nonsense (it can't fix a rate limit) and wastes a second Bedrock
+        # call; it was also silently marking schema_valid_first_try=False for
+        # a transport hiccup that has nothing to do with schema quality,
+        # which is exactly what /metrics' schema_pass_rate depends on being
+        # accurate. See Phase 4 in the execution plan / tests/test_extract_retry.py.
         logger.warning("extraction failed validation on first try: %s", first_error)
         extraction = _extract_once(text, lang, previous_error=str(first_error))
         return extraction, False
