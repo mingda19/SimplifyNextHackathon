@@ -70,6 +70,12 @@ export const api = {
   forecastAll: () => request('/api/pricing/price/forecast/all', { auth: false }),
 
   // --- agent --------------------------------------------------------------
+  decide: (id, decision, by, approved_steps) => request(`/api/agent/agent/runs/${id}/decision`, {
+    method: 'POST',
+    body: approved_steps === undefined
+      ? { decision, decided_by: by }
+      : { decision, decided_by: by, approved_steps },
+  }),
   runs: status => request(`/api/agent/agent/runs${status ? '?status=' + status : ''}`),
   run: id => request(`/api/agent/agent/runs/${id}`),
   startRun: charity_type => request('/api/agent/agent/runs', { method: 'POST', body: { charity_type } }),

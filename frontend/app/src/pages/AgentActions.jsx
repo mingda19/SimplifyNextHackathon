@@ -33,12 +33,17 @@ export default function AgentActions() {
     catch (ex) { setNote(''); setErr(ex) } finally { setBusy(false) }
   }
 
-  const decide = async (id, decision) => {
+  const decide = async (id, decision, approvedSteps) => {
     setBusy(true)
     try {
-      const r = await api.decide(id, decision, user?.email)
+      const r = await api.decide(id, decision, user?.email, approvedSteps)
+      const dec = r.outcome?.declined_steps?.length || 0
+      const res = r.outcome?.feedback_resolved || 0
       setNote(decision === 'approved'
-        ? `Approved. ${r.outcome?.kind === 'purchase_order' ? `Order committed, S$${r.outcome.total_sgd}.` : 'Checklist issued.'}`
+        ? `Approved${dec ? ` (${dec} line${dec > 1 ? 's' : ''} declined)` : ''}. `
+          + `${r.outcome?.kind === 'purchase_order'
+              ? `Committed S$${(r.outcome.total_sgd ?? 0).toFixed(2)}.` : 'Checklist issued.'}`
+          + `${res ? ` ${res} beneficiary message${res > 1 ? 's' : ''} marked resolved.` : ''}`
         : 'Rejected — nothing was committed.')
       setOpen(null); load()
     } catch (ex) { setErr(ex) } finally { setBusy(false) }
@@ -125,6 +130,15 @@ function RunDetail({ run, busy, onClose, onDecide }) {
   const { sensed = {}, predicted = {}, queued = {}, adaptations = [], guardrails = {} } = s
   const pending = run.status === 'pending_approval'
 
+  // Everything starts ticked — the agent's plan is the default, and the human
+  // subtracts from it rather than assembling it line by line.
+  const allIdx = (queued.steps || []).map((st, i) => st.index ?? i)
+  const [picked, setPicked] = useState(allIdx)
+  useEffect(() => { setPicked(allIdx) }, [run.thread_id, (queued.steps || []).length])
+  const selectedTotal = (queued.steps || [])
+    .filter((st, i) => picked.includes(st.index ?? i))
+    .reduce((t, st) => t + (st.value_sgd || 0), 0)
+
   return (
     <div className="modal-back" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 720 }} onClick={e => e.stopPropagation()}>
@@ -172,18 +186,40 @@ function RunDetail({ run, busy, onClose, onDecide }) {
         <p className="small" style={{ marginTop: 4 }}>{predicted.reasoning}</p>
 
         <h3>What it has queued</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Tick only the lines you want. Unticked lines are not ordered and do not
+          close the beneficiary messages behind them.
+        </p>
         {(queued.steps || []).length === 0 ? <p className="muted small">Nothing queued.</p> : (
-          <table><thead><tr><th>Action</th><th>Item</th><th className="num">Qty</th><th>Vendor</th></tr></thead>
-            <tbody>{queued.steps.map((st, i) => (
-              <tr key={i}>
-                <td>{st.action.replace(/_/g, ' ')}</td>
-                <td className="mono small">{st.sku}</td>
-                <td className="num">{st.qty || '—'}</td>
-                <td className="small">{st.vendor_id || '—'}</td>
-              </tr>))}
-            </tbody></table>
+          <table>
+            <thead><tr>
+              <th style={{ width: 34 }}></th><th>Action</th><th>Item</th>
+              <th className="num">Qty</th><th>Vendor</th><th className="num">Value</th>
+            </tr></thead>
+            <tbody>{queued.steps.map((st, i) => {
+              const idx = st.index ?? i
+              const on = picked.includes(idx)
+              return (
+                <tr key={idx} style={{ opacity: on ? 1 : .45 }}>
+                  <td><input type="checkbox" style={{ width: 18 }} checked={on}
+                    disabled={!pending}
+                    onChange={() => setPicked(on ? picked.filter(x => x !== idx)
+                                                 : [...picked, idx].sort((a, b) => a - b))} /></td>
+                  <td>{st.action.replace(/_/g, ' ')}</td>
+                  <td className="mono small">{st.sku}</td>
+                  <td className="num">{st.qty || '—'}</td>
+                  <td className="small">{st.vendor_id || '—'}</td>
+                  <td className="num">{st.value_sgd ? `S$${st.value_sgd.toFixed(2)}` : '—'}</td>
+                </tr>)
+            })}</tbody>
+          </table>
         )}
-        <p className="small" style={{ marginTop: 8 }}><strong>Total: S${queued.total_sgd ?? 0}</strong></p>
+        <p className="small" style={{ marginTop: 8 }}>
+          <strong>Selected: S${selectedTotal.toFixed(2)}</strong>
+          {selectedTotal !== (queued.total_sgd ?? 0) && (
+            <span className="muted"> of S${(queued.total_sgd ?? 0).toFixed(2)} queued</span>
+          )}
+        </p>
 
         <h3>Adaptations it had to make</h3>
         {adaptations.length === 0 ? (
@@ -201,10 +237,13 @@ function RunDetail({ run, busy, onClose, onDecide }) {
         {pending ? (
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 18 }}>
             <button className="btn-danger" disabled={busy}
-                    onClick={() => onDecide(run.thread_id, 'rejected')}>Reject</button>
-            <button className="btn-primary" disabled={busy}
-                    onClick={() => onDecide(run.thread_id, 'approved')}>
-              {busy ? 'Committing…' : `Approve — commit S$${queued.total_sgd ?? 0}`}
+                    onClick={() => onDecide(run.thread_id, 'rejected', [])}>
+              Reject all
+            </button>
+            <button className="btn-primary" disabled={busy || picked.length === 0}
+                    onClick={() => onDecide(run.thread_id, 'approved', picked)}>
+              {busy ? 'Committing…'
+                : `Approve ${picked.length} of ${allIdx.length} — S$${selectedTotal.toFixed(2)}`}
             </button>
           </div>
         ) : (

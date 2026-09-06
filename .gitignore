@@ -10,6 +10,8 @@ aws/cli/
 
 # runtime artefacts — never commit
 *.db
+*.db-wal
+*.db-shm
 spend.json
 
 # Python

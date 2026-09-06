@@ -154,8 +154,14 @@ def get_run(thread_id: str):
 def decide(thread_id: str, payload: dict = Body(...)):
     """Approve or reject a queued plan. This is the guardrail node's other half."""
     decision = str(payload.get("decision", "")).lower()
+    approved_steps = payload.get("approved_steps")
+    if approved_steps is not None:
+        # Per-line selection wins over the blanket decision.
+        approved_steps = [int(i) for i in approved_steps]
+        decision = "approved" if approved_steps else "rejected"
     if decision not in ("approved", "rejected"):
-        raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+        raise HTTPException(400, "decision must be 'approved' or 'rejected', "
+                                 "or send approved_steps")
     who = payload.get("decided_by") or "unknown"
 
     row = _sql("SELECT status FROM agent.runs WHERE thread_id=%s",
@@ -168,7 +174,10 @@ def decide(thread_id: str, payload: dict = Body(...)):
     graph = _graph()
     cfg = {"configurable": {"thread_id": thread_id}}
     try:
-        result = graph.invoke(Command(resume={"decision": decision}), cfg)
+        resume: dict = {"decision": decision}
+        if approved_steps is not None:
+            resume["approved_steps"] = approved_steps
+        result = graph.invoke(Command(resume=resume), cfg)
     except Exception as exc:  # noqa: BLE001
         _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
@@ -179,4 +188,5 @@ def decide(thread_id: str, payload: dict = Body(...)):
          (decision, psycopg2.extras.Json(_jsonable(result.get("outcome"))),
           who, thread_id))
     return {"thread_id": thread_id, "status": decision,
+            "approved_steps": approved_steps,
             "outcome": _jsonable(result.get("outcome"))}

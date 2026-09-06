@@ -18,6 +18,25 @@ from ..state import AgentState, Plan
 log = logging.getLogger(__name__)
 
 
+def _line_total(staged_item: dict[str, Any]) -> float:
+    """Value of one staged order line.
+
+    Workstream 1's order response returns `unit_price_sgd` and `qty` but NOT a
+    `total_sgd` — only the local fake did. Reading total_sgd alone made every
+    real run show S$0.00.
+    """
+    r = staged_item.get("result") or {}
+    if r.get("total_sgd") is not None:
+        return float(r["total_sgd"])
+    if r.get("total_price_sgd") is not None:      # quote responses use this name
+        return float(r["total_price_sgd"])
+    unit = r.get("unit_price_sgd")
+    qty = r.get("qty") or (staged_item.get("step") or {}).get("qty")
+    if unit is not None and qty:
+        return float(unit) * int(qty)
+    return 0.0
+
+
 def build_summary(state: AgentState) -> dict[str, Any]:
     """
     The four panels the dashboard renders. The fourth — adaptations — is the
@@ -33,7 +52,22 @@ def build_summary(state: AgentState) -> dict[str, Any]:
     total = 0.0
     for s in staged:
         if s.get("type") == "order":
-            total += float(s.get("result", {}).get("total_sgd", 0) or 0)
+            total += _line_total(s)
+
+    def _steps_with_value(pl, stg):
+        """Each step with its own index and value, so a human can approve
+        individual lines rather than the whole plan or nothing."""
+        out = []
+        for i, st in enumerate(pl.steps if pl else []):
+            d = st.model_dump()
+            d["index"] = i
+            match = next((x for x in stg
+                          if (x.get("step") or {}).get("sku") == d["sku"]
+                          and (x.get("step") or {}).get("action") == d["action"]), None)
+            d["value_sgd"] = round(_line_total(match), 2) if match else 0.0
+            d["staged"] = match is not None
+            out.append(d)
+        return out
 
     return {
         "sensed": {
@@ -61,7 +95,7 @@ def build_summary(state: AgentState) -> dict[str, Any]:
             "reasoning": plan.reasoning if plan else None,
         },
         "queued": {
-            "steps": [s.model_dump() for s in plan.steps] if plan else [],
+            "steps": _steps_with_value(plan, staged),
             "staged": staged,
             "total_sgd": round(total, 2),
         },
@@ -87,13 +121,31 @@ def approval(state: AgentState) -> dict[str, Any]:
     # Blocks here. The resumed value arrives as the return.
     decision = interrupt(summary)
 
+    # Two shapes accepted:
+    #   {"decision": "approved"}                    — the whole plan
+    #   {"approved_steps": [0, 2]}                  — only these step indexes
+    # Per-step exists because "approve everything or nothing" is not how a
+    # charity actually reviews a purchase: they may want the rice but not the
+    # S$400 of cooking oil in the same plan.
+    approved_steps = None
     if isinstance(decision, dict):
-        verdict = decision.get("decision", "rejected")
+        verdict = str(decision.get("decision", "") or "").strip().lower()
+        if decision.get("approved_steps") is not None:
+            approved_steps = [int(i) for i in decision["approved_steps"]]
+            verdict = "approved" if approved_steps else "rejected"
     else:
-        verdict = str(decision or "rejected")
-    verdict = verdict.strip().lower()
+        verdict = str(decision or "rejected").strip().lower()
     verdict = verdict if verdict in {"approved", "rejected"} else "rejected"
 
-    log.info("approval: human said %s", verdict)
+    n_steps = len(Plan.model_validate(state["plan"]).steps) if state.get("plan") else 0
+    if verdict == "approved" and approved_steps is None:
+        approved_steps = list(range(n_steps))          # whole plan
+    if verdict == "rejected":
+        approved_steps = []
+
+    log.info("approval: human said %s (steps %s of %d)",
+             verdict, approved_steps, n_steps)
     return {"approval": verdict,
-            "attempts": [{"node": "approval", "ok": True, "decision": verdict}]}
+            "approved_steps": approved_steps,
+            "attempts": [{"node": "approval", "ok": True, "decision": verdict,
+                          "approved_steps": approved_steps}]}

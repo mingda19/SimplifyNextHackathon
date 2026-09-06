@@ -51,10 +51,10 @@ def act(state: AgentState) -> dict[str, Any]:
 
     # -- backend actions ---------------------------------------------------
     try:
-        if action in COMMITTING_ACTIONS:
-            result = services.vendor_order(step["vendor_id"], step["sku"], step["qty"])
-        elif action == "request_quote":
-            result = services.vendor_order(step["vendor_id"], step["sku"], step["qty"])
+        if action in COMMITTING_ACTIONS or action == "request_quote":
+            # QUOTE, never order. Nothing here may spend money — COMMIT does
+            # that, after a human has ticked the line.
+            result = services.vendor_quote(step["vendor_id"], step["sku"], step["qty"])
         else:  # reallocate_lot
             # TODO(W/G): real endpoint once workstream 1 ships lot reallocation.
             result = {"status": "STAGED", "note": "reallocate_lot stub"}

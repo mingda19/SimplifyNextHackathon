@@ -32,6 +32,10 @@ Rules:
 - A need that maps to no existing SKU must become a `flag_for_human` step.
 - Prefer the vendor whose lead time beats the projected stockout date.
 - If the price forecast says BUY_NOW, do not defer an order to a later cycle.
+- `already_on_the_way` lists stock ALREADY ordered and not yet delivered. Do
+  NOT propose another order for a SKU that has enough inbound to clear its
+  shortfall — say so in `reasoning` instead. Re-ordering what is already coming
+  is the most expensive mistake you can make here.
 - If an input service was unavailable, reason without it and say so in `reasoning`.
 - `reasoning` is shown to a human approver. Write it for them, not for a log."""
 
@@ -115,6 +119,10 @@ def _compact(sow: dict[str, Any]) -> dict[str, Any]:
     out["inventory_healthy_count"] = skipped
 
     out["alerts"] = sow.get("alerts")
+
+    # What is already ordered. PREDICT must subtract this before proposing a
+    # restock, or it re-orders the same SKU every run for the whole lead time.
+    out["already_on_the_way"] = sow.get("inbound_orders") or {}
 
     needs = (sow.get("unmet_needs") or {}).get("ranked") or []
     out["top_unmet_needs"] = [

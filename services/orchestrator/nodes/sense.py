@@ -32,6 +32,7 @@ def sense(state: AgentState) -> dict[str, Any]:
         "inventory": services.get_inventory,
         "alerts": services.get_alerts,
         "unmet_needs": services.get_unmet_needs,
+        "inbound_orders": services.get_inbound_orders,
     }
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         results = list(pool.map(lambda kv: _safe(kv[0], kv[1]), tasks.items()))
@@ -114,6 +115,7 @@ def _shape(sow: dict[str, Any]) -> dict[str, Any]:
         "unmet_needs": len(needs),
         "needs_with_no_sku": sum(1 for n in needs if n.get("gap")),
         "at_risk_series": len(sow.get("at_risk_series") or []),
+        "skus_with_inbound": len(sow.get("inbound_orders") or {}),
         "price_forecasts": len(pf.get("forecasts") or {}),
         "price_no_forecast": len(pf.get("no_forecast_for") or []),
         "actionable_price_signals": sum(
@@ -124,9 +126,10 @@ def _shape(sow: dict[str, Any]) -> dict[str, Any]:
 
 def _trace(sow: dict[str, Any], degraded: list[str]) -> None:
     sh = _shape(sow)
-    log.info("SENSE ─ inventory=%d below_reorder=%d expiring=%d | needs=%d (gaps=%d) "
-             "| at_risk_series=%d forecasts=%d actionable=%d | degraded=%s",
+    log.info("SENSE ─ inventory=%d below_reorder=%d expiring=%d inbound=%d "
+             "| needs=%d (gaps=%d) | at_risk_series=%d forecasts=%d actionable=%d "
+             "| degraded=%s",
              sh["inventory_items"], sh["below_reorder"], sh["expiring_soon"],
-             sh["unmet_needs"], sh["needs_with_no_sku"], sh["at_risk_series"],
-             sh["price_forecasts"], sh["actionable_price_signals"],
-             degraded or "none")
+             sh["skus_with_inbound"], sh["unmet_needs"], sh["needs_with_no_sku"],
+             sh["at_risk_series"], sh["price_forecasts"],
+             sh["actionable_price_signals"], degraded or "none")

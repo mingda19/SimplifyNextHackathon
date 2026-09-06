@@ -78,6 +78,33 @@ def get_unmet_needs() -> dict[str, Any]:
     return _get(settings.feedback_url, "/feedback/unmet-needs")
 
 
+def get_inbound_orders() -> dict[str, Any]:
+    """Open purchase orders per SKU — what is already on the way.
+
+    `on_hand` does not move until goods physically arrive, so without this a
+    SKU sits below its reorder point for the whole lead time and the agent
+    re-proposes the same restock on every run.
+    """
+    if settings.fake_inventory:
+        return {}
+    return _get(settings.inventory_url, "/orders/inbound")
+
+
+def resolve_feedback(skus: list[str], run_id: str, note: str = "") -> dict[str, Any]:
+    """Close the feedback rows an approved order actually addresses."""
+    if settings.fake_feedback or not skus:
+        return {"resolved": 0}
+    url = f"{settings.feedback_url.rstrip('/')}/feedback/resolve"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"skus": skus, "run_id": run_id, "note": note})
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as exc:
+        log.warning("could not resolve feedback: %s", exc)
+        return {"resolved": 0, "error": str(exc)}
+
+
 def get_price_forecasts(series_names: list[str]) -> dict[str, Any]:
     """Forecast every series the at-risk SKUs actually map to.
 
@@ -163,8 +190,46 @@ class VendorError(Exception):
                      "remedy_hint": remedy_hint, "alternatives": alternatives}
 
 
+def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
+    """Price a line WITHOUT committing it.
+
+    ACT used to call /vendor/{id}/order to "stage" a step — but that endpoint
+    really places the order. Every line was therefore committed before the human
+    saw the plan, which made the approval gate cosmetic: declining a line left
+    the order standing in the database.
+
+    /quote returns the same error codes and the same `alternatives` payload the
+    adapt loop reasons over, and creates nothing. Planning happens here; money
+    is spent only in COMMIT, and only for approved steps.
+    """
+    if settings.fake_inventory:
+        return _fake_vendor_call(vendor_id, sku, qty)
+
+    url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/quote"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"sku": sku, "qty": qty})
+    except httpx.HTTPError as exc:
+        raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
+
+    body: dict[str, Any] = {}
+    try:
+        body = r.json()
+    except ValueError:
+        pass
+    # This service reports domain refusals in the body with a `code`, whether or
+    # not the HTTP status is an error — treat either as a VendorError.
+    if body.get("code") or (400 <= r.status_code < 500):
+        raise VendorError(r.status_code, body.get("code", "UNKNOWN"),
+                          body.get("message", r.text),
+                          body.get("alternatives", []), body.get("remedy_hint", ""))
+    if not r.is_success:
+        raise ServiceError(f"quote {vendor_id} returned {r.status_code}")
+    return {"status": "QUOTED", **body}
+
+
 def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
-    """Stage an order. Raises VendorError on a 4xx."""
+    """COMMIT an order. Real money. Only COMMIT calls this."""
     if settings.fake_inventory:
         return _fake_vendor_call(vendor_id, sku, qty)
 
