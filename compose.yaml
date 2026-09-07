@@ -84,6 +84,12 @@ services:
     build:
       context: .
       dockerfile: services/feedback/Dockerfile
+    # Same env_file as orchestrator. Without it this container received no AWS
+    # credentials at all, so every extraction failed with "could not resolve
+    # credentials from session" while the orchestrator -- which did have
+    # env_file -- called Bedrock fine.
+    env_file:
+      - .env
     environment:
       <<: *service-env
       INVENTORY_URL: http://inventory:8000
