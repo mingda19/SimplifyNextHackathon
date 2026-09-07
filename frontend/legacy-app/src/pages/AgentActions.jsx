@@ -253,6 +253,9 @@ export default function AgentActions() {
 // The four panels the guardrail node emits. `adaptations` gets the most space
 // on purpose: it is the only place you can see the agent hit a wall and reason
 // its way around it, which is the difference between a workflow and an agent.
+// The four panels the guardrail node emits. `adaptations` gets the most space
+// on purpose: it is the only place you can see the agent hit a wall and reason
+// its way around it, which is the difference between a workflow and an agent.
 function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const s = run.summary || {};
   const {
@@ -265,13 +268,41 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const pending = run.status === "pending_approval";
   const legacy = s.approval_version !== 2;
 
-  // Everything starts ticked — the agent's plan is the default, and the human
-  // subtracts from it rather than assembling it line by line.
+  // 1. Identify all possible step indices
   const allIdx = (queued.steps || []).map((st, i) => st.index ?? i);
-  const [picked, setPicked] = useState(allIdx);
+
+  // 2. Logic to determine historical checkbox state based on run status and database outcome
+  const getHistoricalSelection = () => {
+    // If it's a new or currently processing run, everything starts checked
+    if (run.status === "pending_approval" || run.status === "committing") {
+      return allIdx;
+    }
+    // If it was fully rejected, nothing is checked
+    if (run.status === "rejected") {
+      return [];
+    }
+
+    // If it finished (approved/completed/failed), check the backend's declined_steps
+    if (run.outcome?.declined_steps) {
+      const declinedSkus = run.outcome.declined_steps.map((d) => d.sku);
+      return (queued.steps || [])
+        .map((st, i) => ({ idx: st.index ?? i, sku: st.sku }))
+        .filter((st) => !declinedSkus.includes(st.sku))
+        .map((st) => st.idx);
+    }
+
+    // Fallback if there is no outcome saved yet
+    return allIdx;
+  };
+
+  const [picked, setPicked] = useState(getHistoricalSelection());
+
+  // Re-run the historical selection logic if the run updates (e.g. going from pending -> approved)
   useEffect(() => {
-    setPicked(allIdx);
-  }, [run.thread_id, (queued.steps || []).length]);
+    setPicked(getHistoricalSelection());
+  }, [run.thread_id, (queued.steps || []).length, run.status, run.outcome]);
+
+  // Calculate the S$ total dynamically based on checked items
   const selectedTotal = (queued.steps || [])
     .filter((st, i) => picked.includes(st.index ?? i))
     .reduce((t, st) => t + (st.value_sgd || 0), 0);
@@ -363,8 +394,9 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
 
         <h3>What it has queued</h3>
         <p className="muted small" style={{ marginTop: -4 }}>
-          Tick only the lines you want. Unticked lines are not ordered and do
-          not close the beneficiary messages behind them.
+          {pending
+            ? "Tick only the lines you want. Unticked lines are not ordered and do not close the beneficiary messages behind them."
+            : "Unticked lines were rejected and not ordered."}
         </p>
         {(queued.steps || []).length === 0 ? (
           <p className="muted small">Nothing queued.</p>
@@ -485,7 +517,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
                 style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
               >
                 {JSON.stringify(
-                  (s.trace || []).filter((t) => t.node === node),
+                  (s.trace || s.attempts || []).filter((t) => t.node === node),
                   null,
                   2,
                 )}
