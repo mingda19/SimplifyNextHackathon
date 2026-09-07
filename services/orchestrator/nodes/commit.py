@@ -1,12 +1,19 @@
 """Execute exactly the staged, approved actions using durable backend keys."""
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 
 from .. import services
 from ..config import BASELINES
 from ..state import APPROVAL_VERSION, AgentState, Plan, PlanStep
+
+# 1. Define the logger
+log = logging.getLogger(__name__)
+
+# 2. Define the idempotency set
+_COMMITTED: set[str] = set()
 
 
 def _checklist(state: AgentState, staged: list[dict]) -> dict:
@@ -47,16 +54,22 @@ def commit(state: AgentState) -> dict[str, Any]:
         return {"halt_reason": "Legacy approval: review existing orders and start a new run."}
     if state.get("approval") != "approved" or state.get("halt_reason"):
         return {"halt_reason": state.get("halt_reason") or "Human approval is required before commit."}
-    if not state.get("thread_id"):
+    
+    # FIX 1: Assign thread_id
+    thread_id = state.get("thread_id")
+    if not thread_id:
         raise ValueError("commit requires a durable thread_id")
+        
     staged = state.get("staged", [])
     plan = Plan.model_validate(state["plan"]) if state.get("plan") else None
-    if state.get("charity_type", "B") == "A":
+    
+    # FIX 2: Assign charity_type
+    charity_type = state.get("charity_type", "B")
+    
+    if charity_type == "A":
         return {"outcome": _checklist(state, staged),
                 "attempts": [{"node": "commit", "ok": True, "kind": "acquisition_checklist"}]}
 
-    # Only the steps the human actually ticked. None means "whole plan"
-    # (older callers / the CLI); an empty list means nothing was approved.
     approved = state.get("approved_steps")
     step_index = {}
     if plan:
@@ -75,6 +88,7 @@ def commit(state: AgentState) -> dict[str, Any]:
             declined.append(st)
             continue
 
+        # thread_id is now safely defined
         key = f"{thread_id}:{idx}"
         if key in _COMMITTED:
             skipped.append(key)
@@ -82,48 +96,17 @@ def commit(state: AgentState) -> dict[str, Any]:
         _COMMITTED.add(key)
 
         if item["type"] == "order":
-            # THIS is where money is spent — the only place that calls /order.
             try:
                 placed = services.vendor_order(st["vendor_id"], st["sku"], st["qty"])
                 committed.append({"type": "order", "step": st,
                                   "result": {**placed, "status": "CONFIRMED"}})
-            except Exception as exc:                  # noqa: BLE001
-                # One line failing must not lose the others that succeeded.
+            except Exception as exc:                  
                 log.warning("commit: order failed for %s: %s", st.get("sku"), exc)
                 failed.append({"step": st, "error": str(exc)})
         else:
             committed.append(item)
 
-    if charity_type == "A":
-        # Donation-fed: the terminal action is a ranked acquisition checklist.
-        outcome = {
-            "kind": "acquisition_checklist",
-            "items": [
-                {"sku": c["step"]["sku"], "qty": c["step"].get("qty", 0),
-                 "why": c["step"].get("rationale", "")}
-                for c in committed
-            ],
-            "review_flags": [c["step"] for c in committed
-                             if c["step"]["action"] == "flag_for_human"],
-        }
-    else:
-        # Budget-funded: the terminal action is a confirmed purchase order.
-        orders = [c for c in committed if c["type"] == "order"]
-        outcome = {
-            "kind": "purchase_order",
-            "orders": orders,
-            "total_sgd": round(sum(_line_value(o["result"]) for o in orders), 2),
-            "timing_rationale": (plan.reasoning if plan else ""),
-            "review_flags": [c["step"] for c in committed
-                             if c["step"]["action"] == "flag_for_human"],
-        }
-
-    outcome["declined_steps"] = declined
-    outcome["failed_steps"] = failed
-
-    # Close the loop: tell the feedback service which needs this order actually
-    # addresses, so the next run does not re-propose work already done. Only
-    # SKUs we really committed — a declined line resolves nothing.
+    # Resolve Feedback
     ordered_skus = sorted({c["step"]["sku"] for c in committed
                            if c.get("type") == "order" and c.get("step", {}).get("sku")})
     resolution = {"resolved": 0}
@@ -132,26 +115,33 @@ def commit(state: AgentState) -> dict[str, Any]:
             resolution = services.resolve_feedback(
                 ordered_skus, thread_id,
                 note=f"ordered via agent run {thread_id}")
-        except Exception as exc:                      # noqa: BLE001
-            # Never fail a committed order because bookkeeping failed — the
-            # money is already spent; the worst case is a duplicate proposal.
+        except Exception as exc:                      
             log.warning("commit: feedback resolution failed: %s", exc)
             resolution = {"resolved": 0, "error": str(exc)}
-    outcome["feedback_resolved"] = resolution.get("resolved", 0)
+
+    # FIX 3: Define failure
+    failure = failed[0]["error"] if failed else None
+
+    # FIX 4: Build ONE unified outcome dictionary instead of overwriting it
+    orders = [c for c in committed if c["type"] == "order"]
+    outcome = {
+        "kind": "commit_failed" if failure else "purchase_order",
+        "orders": orders,
+        "allocations": [c for c in committed if c["type"] == "allocation"],
+        "total_sgd": float(sum((services.total_sgd(o["result"]) for o in orders), Decimal(0))) if hasattr(services, 'total_sgd') else round(sum(_line_value(o["result"]) for o in orders), 2),
+        "timing_rationale": (state.get("state_of_world", {}).get("price_forecast") or {}).get("rationale", plan.reasoning if plan else ""),
+        "review_flags": [s["step"] for s in staged if s["step"]["action"] == "flag_for_human"],
+        "declined_steps": declined,
+        "failed_steps": failed,
+        "failure": failure,
+        "feedback_resolved": resolution.get("resolved", 0)
+    }
 
     log.info("commit: %s — %d committed, %d declined, %d skipped, "
              "%d feedback row(s) resolved",
              outcome["kind"], len(committed), len(declined), len(skipped),
              resolution.get("resolved", 0))
 
-    orders = [entry for entry in committed if entry["type"] == "order"]
-    outcome = {"kind": "commit_failed" if failure else "purchase_order",
-               "orders": orders, "allocations": [c for c in committed if c["type"] == "allocation"],
-               "total_sgd": float(sum((services.total_sgd(o["result"]) for o in orders), Decimal(0))),
-               "timing_rationale": (state.get("state_of_world", {}).get("price_forecast") or {}).get(
-                   "rationale", plan.reasoning if plan else ""),
-               "review_flags": [s["step"] for s in staged if s["step"]["action"] == "flag_for_human"],
-               "failure": failure}
     return {"outcome": outcome,
             "attempts": [{"node": "commit", "ok": True, "kind": outcome["kind"],
                           "committed": len(committed), "declined": len(declined),

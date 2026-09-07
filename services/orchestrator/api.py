@@ -183,58 +183,83 @@ def decide(thread_id: str, payload: dict = Body(...)):
     decision = str(payload.get("decision", "")).lower()
     approved_steps = payload.get("approved_steps")
 
-    print("Decision payload:", payload)
-    print("Approved steps:", approved_steps)
-
     if approved_steps is not None:
-        # Per-line selection wins over the blanket decision.
         approved_steps = [int(i) for i in approved_steps]
         decision = "approved" if approved_steps else "rejected"
         
     if decision not in ("approved", "rejected"):
-        raise HTTPException(400, "decision must be 'approved' or 'rejected', or send approved_steps")
+        raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected', or send approved_steps")
         
     who = payload.get("decided_by") or "unknown"
 
     # 2. Database Validation
     row = _sql("SELECT * FROM agent.runs WHERE thread_id=%s", (thread_id,), fetch="one")
     if not row:
-        raise HTTPException(404, "no such run")
+        raise HTTPException(status_code=404, detail="no such run")
         
     retrying = row["status"] == "committing"
     if retrying:
-        # Prevent a different admin from retrying someone else's decision
         if row.get("decision") != decision or row.get("decided_by") != who:
-            raise HTTPException(409, "only the original approver can retry this decision")
+            raise HTTPException(status_code=409, detail="only the original approver can retry this decision")
     elif row["status"] != "pending_approval":
-        raise HTTPException(409, f"run is '{row['status']}', not awaiting approval")
+        raise HTTPException(status_code=409, detail=f"run is '{row['status']}', not awaiting approval")
 
     # 3. Resume the LangGraph Agent
-    graph = _graph()
+    # Instantiate a fresh graph to avoid cross-thread DB connection sharing issues
+    graph = compile_graph()
     cfg = {"configurable": {"thread_id": thread_id}}
+    result = None
     
     try:
         resume_data = {"decision": decision}
         if approved_steps is not None:
             resume_data["approved_steps"] = approved_steps
             
-        # Send the decision into the paused graph using Command
-        result = graph.invoke(Command(resume=resume_data), cfg)
+        # Standard synchronous invoke
+        result = graph.invoke(Command(resume=resume_data), config=cfg)
         
     except Exception as exc:  # noqa: BLE001
-        _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
-             (f"{type(exc).__name__}: {exc}", thread_id))
-        raise HTTPException(500, f"resume failed: {exc}")
+        logger.exception("resume %s failed", thread_id)
+        try:
+            # Wrapped in try/except so DB disconnects don't mask the primary error
+            _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
+                 (f"{type(exc).__name__}: {exc}", thread_id))
+        except Exception:
+            pass
+            
+        raise HTTPException(status_code=500, detail=f"resume failed: {exc}") from exc
+        
+    finally:
+        # Prevent connection leaks
+        if graph is not None:
+            graph.checkpointer.conn.close()
 
-    # 4. Save Final Outcome to Database
-    _sql("""UPDATE agent.runs 
-            SET status=%s, outcome=%s, decided_at=now(), decided_by=%s 
-            WHERE thread_id=%s""",
-         (decision, psycopg2.extras.Json(_jsonable(result.get("outcome"))), who, thread_id))
-         
+    # 4. Save Final Outcome to Database (Checking for subsequent interrupts)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Graph returned no state.")
+
+    if "__interrupt__" in result:
+        summary = _jsonable(result["__interrupt__"][0].value)
+        _sql("""UPDATE agent.runs SET status='pending_approval', summary=%s
+                WHERE thread_id=%s""",
+             (psycopg2.extras.Json(summary), thread_id))
+        status_to_return = "pending_approval"
+        
+    elif result.get("halt_reason"):
+        _sql("UPDATE agent.runs SET status='failed', error=%s, summary=%s WHERE thread_id=%s",
+             (result["halt_reason"], psycopg2.extras.Json(_jsonable(build_summary(result))), thread_id))
+        status_to_return = "failed"
+        
+    else:
+        _sql("""UPDATE agent.runs 
+                SET status=%s, outcome=%s, decided_at=now(), decided_by=%s 
+                WHERE thread_id=%s""",
+             (decision, psycopg2.extras.Json(_jsonable(result.get("outcome"))), who, thread_id))
+        status_to_return = decision
+        
     return {
         "thread_id": thread_id, 
-        "status": decision,
+        "status": status_to_return,
         "approved_steps": approved_steps,
         "outcome": _jsonable(result.get("outcome"))
     }
