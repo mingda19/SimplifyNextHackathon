@@ -5,6 +5,7 @@ LangGraph `interrupt()` pauses the graph here. Execution resumes only when a
 human sends a decision back, and the checkpointer means a pending approval
 survives a process restart.
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +29,7 @@ def _line_total(staged_item: dict[str, Any]) -> float:
     r = staged_item.get("result") or {}
     if r.get("total_sgd") is not None:
         return float(r["total_sgd"])
-    if r.get("total_price_sgd") is not None:      # quote responses use this name
+    if r.get("total_price_sgd") is not None:  # quote responses use this name
         return float(r["total_price_sgd"])
     unit = r.get("unit_price_sgd")
     qty = r.get("qty") or (staged_item.get("step") or {}).get("qty")
@@ -61,9 +62,15 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         for i, st in enumerate(pl.steps if pl else []):
             d = st.model_dump()
             d["index"] = i
-            match = next((x for x in stg
-                          if (x.get("step") or {}).get("sku") == d["sku"]
-                          and (x.get("step") or {}).get("action") == d["action"]), None)
+            match = next(
+                (
+                    x
+                    for x in stg
+                    if (x.get("step") or {}).get("sku") == d["sku"]
+                    and (x.get("step") or {}).get("action") == d["action"]
+                ),
+                None,
+            )
             d["value_sgd"] = round(_line_total(match), 2) if match else 0.0
             d["staged"] = match is not None
             out.append(d)
@@ -79,14 +86,26 @@ def build_summary(state: AgentState) -> dict[str, Any]:
             # hardcoded series. Surface only the actionable ones — a screen full
             # of NEUTRAL tells the approver nothing.
             "price_signals": [
-                {k: f.get(k) for k in ("series", "direction", "recommendation",
-                                       "pct_change_3m", "confidence",
-                                       "data_lag_months")}
-                for f in ((sow.get("price_forecast") or {}).get("forecasts") or {}).values()
+                {
+                    k: f.get(k)
+                    for k in (
+                        "series",
+                        "direction",
+                        "recommendation",
+                        "pct_change_3m",
+                        "confidence",
+                        "data_lag_months",
+                    )
+                }
+                for f in (
+                    (sow.get("price_forecast") or {}).get("forecasts") or {}
+                ).values()
                 if f.get("recommendation") in ("BUY_NOW", "DEFER")
             ],
-            "price_series_without_forecast":
-                (sow.get("price_forecast") or {}).get("no_forecast_for") or [],
+            "price_series_without_forecast": (sow.get("price_forecast") or {}).get(
+                "no_forecast_for"
+            )
+            or [],
             "unavailable_services": state.get("degraded_services", []),
         },
         "predicted": {
@@ -101,8 +120,12 @@ def build_summary(state: AgentState) -> dict[str, Any]:
         },
         # The panel that matters. Give it the most space in the UI.
         "adaptations": [
-            {"attempt": a.get("attempt"), "error_code": a.get("error_code"),
-             "what_changed": a.get("what_changed"), "confidence": a.get("confidence")}
+            {
+                "attempt": a.get("attempt"),
+                "error_code": a.get("error_code"),
+                "what_changed": a.get("what_changed"),
+                "confidence": a.get("confidence"),
+            }
             for a in adaptations
         ],
         "guardrails": {
@@ -110,13 +133,18 @@ def build_summary(state: AgentState) -> dict[str, Any]:
             "exceeds_single_order_cap": total > BASELINES["max_single_order_sgd"],
             "halt_reason": state.get("halt_reason"),
         },
+        "trace": attempts,
+        "approval_version": 2,
     }
 
 
 def approval(state: AgentState) -> dict[str, Any]:
     summary = build_summary(state)
-    log.info("approval: pausing for human — S$%.2f staged, %d adaptation(s)",
-             summary["queued"]["total_sgd"], len(summary["adaptations"]))
+    log.info(
+        "approval: pausing for human — S$%.2f staged, %d adaptation(s)",
+        summary["queued"]["total_sgd"],
+        len(summary["adaptations"]),
+    )
 
     # Blocks here. The resumed value arrives as the return.
     decision = interrupt(summary)
@@ -139,13 +167,22 @@ def approval(state: AgentState) -> dict[str, Any]:
 
     n_steps = len(Plan.model_validate(state["plan"]).steps) if state.get("plan") else 0
     if verdict == "approved" and approved_steps is None:
-        approved_steps = list(range(n_steps))          # whole plan
+        approved_steps = list(range(n_steps))  # whole plan
     if verdict == "rejected":
         approved_steps = []
 
-    log.info("approval: human said %s (steps %s of %d)",
-             verdict, approved_steps, n_steps)
-    return {"approval": verdict,
-            "approved_steps": approved_steps,
-            "attempts": [{"node": "approval", "ok": True, "decision": verdict,
-                          "approved_steps": approved_steps}]}
+    log.info(
+        "approval: human said %s (steps %s of %d)", verdict, approved_steps, n_steps
+    )
+    return {
+        "approval": verdict,
+        "approved_steps": approved_steps,
+        "attempts": [
+            {
+                "node": "approval",
+                "ok": True,
+                "decision": verdict,
+                "approved_steps": approved_steps,
+            }
+        ],
+    }
