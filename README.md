@@ -80,6 +80,8 @@ The orchestrator runs a four-phase LangGraph loop:
 | `services/feedback` | 8002 | Captures beneficiary feedback, extracts structured unmet needs via Claude, joins them to real SKUs. |
 | `services/orchestrator` | 8003 | The LangGraph agent: sense → predict → act/adapt → approval → commit. `SqliteSaver` checkpointing so a pending approval survives a restart. |
 | `services/price_forecaster` | 8004 | Trend/seasonality signal (`BUY_NOW` / `DEFER` / `NEUTRAL`) from the DSPI commodity index, with confidence and data-lag attached — never a claim of day-level precision. |
+| `postgres` | 5432 | Shared Postgres 16. One instance, one schema per service (`inventory`, `auth`, `feedback`) so services stay isolated without a second container. Bound to `127.0.0.1` only; override with `POSTGRES_PORT`. |
+| `frontend/app` | 5173 | React 19 + Vite dev server (`npm run dev` in `frontend/app`). The charity dashboard and the public recipient link. Not containerised — run it on the host against the compose stack. |
 
 Two fields carry the integration across services — do not drop them: `items.dspi_series` (SKU → DSPI
 commodity row, used for pricing) and `lots.source` (`PURCHASED` vs `DONATED`, the Type A/B signal).
@@ -94,9 +96,6 @@ BASELINES = {
     "expiry_buffer_days": 14,
 }
 ```
-
-See [DATA_SOURCES.md](DATA_SOURCES.md) for every verified external data source used by the price
-forecaster.
 
 ## Repo layout
 
