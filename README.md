@@ -81,7 +81,7 @@ The orchestrator runs a four-phase LangGraph loop:
 | `services/orchestrator` | 8003 | The LangGraph agent: sense → predict → act/adapt → approval → commit. `SqliteSaver` checkpointing so a pending approval survives a restart. |
 | `services/price_forecaster` | 8004 | Trend/seasonality signal (`BUY_NOW` / `DEFER` / `NEUTRAL`) from the DSPI commodity index, with confidence and data-lag attached — never a claim of day-level precision. |
 | `postgres` | 5432 | Shared Postgres 16. One instance, one schema per service (`inventory`, `auth`, `feedback`) so services stay isolated without a second container. Bound to `127.0.0.1` only; override with `POSTGRES_PORT`. |
-| `frontend/app` | 5173 | React 19 + Vite dev server (`npm run dev` in `frontend/app`). The charity dashboard and the public recipient link. Not containerised — run it on the host against the compose stack. |
+| `frontend/legacy-app` | 5173 | React 19 + Vite dev server (`npm run dev` in `frontend/legacy-app`). The charity dashboard and the public recipient link. Not containerised — run it on the host against the compose stack. |
 
 Two fields carry the integration across services — do not drop them: `items.dspi_series` (SKU → DSPI
 commodity row, used for pricing) and `lots.source` (`PURCHASED` vs `DONATED`, the Type A/B signal).
@@ -106,7 +106,7 @@ services/feedback/         beneficiary feedback + extraction
 services/orchestrator/     LangGraph agent
 services/price_forecaster/ DSPI trend/seasonality signal
 services/pantry_common/    shared auth + baseline helpers
-frontend/app/               approval dashboard (React + Vite + TypeScript)
+frontend/legacy-app/               approval dashboard (React + Vite + TypeScript)
 frontend/intake/            beneficiary feedback intake page
 data/                        cached DSPI CSV and parsing scripts
 scripts/                     setup, seeding, AWS SSO and readiness helpers
@@ -139,7 +139,7 @@ Requires Docker and Node.js 20.12+.
 3. Run the dashboard:
 
    ```bash
-   cd frontend/app
+   cd frontend/legacy-app
    npm ci
    npm run dev
    ```
