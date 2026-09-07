@@ -57,7 +57,17 @@ export default function AgentActions() {
   const decide = async (id, decision, approvedSteps) => {
     setBusy(true);
     try {
+      // FIX: Pass a single payload object that exactly matches your api.py schema
+      const payload = {
+        decision: decision,
+        decided_by: user?.email,
+        approved_steps: approvedSteps,
+      };
+
+      // Update this line to match how your api.js accepts object payloads
+      // (If api.decide expects (id, payload))
       const r = await api.decide(id, decision, user?.email, approvedSteps);
+
       const dec = r.outcome?.declined_steps?.length || 0;
       const res = r.outcome?.feedback_resolved || 0;
       setNote(
