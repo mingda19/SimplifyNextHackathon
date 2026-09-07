@@ -29,7 +29,8 @@ prevents it.
 
 Rules:
 - Only use the four permitted actions. Never invent an action.
-- A need that maps to no existing SKU must become a `flag_for_human` step.
+- CRITICAL: For any executable action (like `order`), you MUST provide a `qty` strictly greater than 0.
+- If you are unsure of a quantity, need to request a quote, or a need maps to no existing SKU, use the `flag_for_human` action instead.
 - Prefer the vendor whose lead time beats the projected stockout date.
 - If the price forecast says BUY_NOW, do not defer an order to a later cycle.
 - `already_on_the_way` lists stock ALREADY ordered and not yet delivered. Do
