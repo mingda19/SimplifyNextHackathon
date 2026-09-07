@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import ValidationError  # <-- Add this import
+
 from .. import llm
 from ..ledger import BudgetExceeded
 from ..state import AgentState
@@ -27,6 +29,17 @@ def predict(state: AgentState) -> dict[str, Any]:
         log.error("predict: %s", exc)
         return {"halt_reason": str(exc),
                 "attempts": [{"node": "predict", "ok": False, "error": str(exc)}]}
+    
+    # Add this specific block for LLM hallucinations / schema errors
+    except ValidationError as exc:
+        # Extract just the human-readable error message from Pydantic
+        error_msg = exc.errors()[0]["msg"]
+        log.warning("predict: LLM failed schema validation: %s", error_msg)
+        return {
+            "halt_reason": f"AI generated an invalid plan: {error_msg}. Please retry.",
+            "attempts": [{"node": "predict", "ok": False, "error": f"ValidationError: {error_msg}"}]
+        }
+        
     except Exception as exc:                      # noqa: BLE001
         log.exception("predict: model call failed")
         return {"halt_reason": f"predict failed: {exc}",

@@ -85,5 +85,5 @@ export const api = {
   runs: status => request(`/api/agent/agent/runs${status ? '?status=' + status : ''}`),
   run: id => request(`/api/agent/agent/runs/${id}`),
   startRun: charity_type => request('/api/agent/agent/runs', { method: 'POST', body: { charity_type } }),
-  decide: (id, decision, by) => request(`/api/agent/agent/runs/${id}/decision`, { method: 'POST', body: { decision, decided_by: by } }),
+  // decide: (id, decision, by) => request(`/api/agent/agent/runs/${id}/decision`, { method: 'POST', body: { decision, decided_by: by } }),
 }

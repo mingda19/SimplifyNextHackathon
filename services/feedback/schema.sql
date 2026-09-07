@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS feedback.feedback_entries (
     extraction_error        TEXT,
     extracted_at            TIMESTAMPTZ,
 
-     resolved_at             TIMESTAMPTZ,
+    resolved_at             TIMESTAMPTZ,
+    resolved_by_run         TEXT, 
+    resolution_note         TEXT,
 
     -- extraction contract fields (frozen -- field names are load-bearing, M's
     -- queries depend on them)

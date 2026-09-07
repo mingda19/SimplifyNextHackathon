@@ -12,6 +12,7 @@ lang, and channel are committed before the background task is even scheduled.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 
@@ -27,6 +28,10 @@ from app.unmet_needs import aggregate as aggregate_unmet_needs
 
 logger = logging.getLogger("feedback.main")
 logging.basicConfig(level=logging.INFO)
+
+def _flag(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
 
 app = FastAPI(title="Pantry Feedback Service")
 
@@ -53,8 +58,24 @@ def on_startup() -> None:
     db.init_pool()
 
 
-@app.post("/feedback", status_code=202)
+@app.post("/feedback", status_code=201)
 def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
+    """Store the message, then extract it BEFORE returning.
+
+    Extraction used to run in a Starlette BackgroundTask. That made the request
+    fast, but it also meant a message posted through the intake screen was not
+    yet extracted when the agent next ran — so /feedback/unmet-needs did not see
+    it and SENSE had nothing to go on. Worse, a failing background task failed
+    silently: the row sat at extraction_status='pending' forever with nobody
+    watching.
+
+    Running it inline makes a new message immediately visible to the agent and
+    surfaces failures to the caller. The raw text is still INSERTed and
+    committed first, so the beneficiary's words survive even if extraction dies.
+
+    Set FEEDBACK_ASYNC_EXTRACTION=1 to restore the old background behaviour if
+    extraction latency ever becomes a problem on the intake screen.
+    """
     with db.get_cursor() as cur:
         cur.execute(
             """
@@ -66,9 +87,51 @@ def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
         )
         feedback_id = cur.fetchone()["id"]
 
-    logger.info("feedback %s received, raw text logged, extraction queued", feedback_id)
-    background_tasks.add_task(extract_and_store, feedback_id, payload.text, payload.lang)
-    return {"id": feedback_id, "status": "received"}
+    if _flag("FEEDBACK_ASYNC_EXTRACTION"):
+        logger.info("feedback %s received, extraction queued (async mode)", feedback_id)
+        background_tasks.add_task(extract_and_store, feedback_id,
+                                  payload.text, payload.lang)
+        return {"id": feedback_id, "status": "received",
+                "extraction_status": "pending"}
+
+    # extract_and_store never raises — it records extraction_status='failed'
+    # and keeps the raw row — so a bad extraction cannot lose the message.
+    extract_and_store(feedback_id, payload.text, payload.lang)
+    with db.get_cursor() as cur:
+        cur.execute("""SELECT extraction_status, urgency, mentioned_skus, summary_en
+                       FROM feedback.feedback_entries WHERE id=%s""", (feedback_id,))
+        row = cur.fetchone() or {}
+    logger.info("feedback %s stored and extracted -> %s",
+                feedback_id, row.get("extraction_status"))
+    return {"id": feedback_id, "status": "received", **row}
+
+
+@app.post("/feedback/extract-pending")
+def extract_pending(limit: int = 50):
+    """Re-run extraction for anything still pending or failed.
+
+    Backfill for rows created while extraction was broken (missing credentials,
+    a service restart mid-request). Without this they stay invisible to
+    /feedback/unmet-needs permanently, because nothing ever retries them.
+    """
+    with db.get_cursor() as cur:
+        cur.execute("""SELECT id, text, lang FROM feedback.feedback_entries
+                       WHERE extraction_status <> 'done'
+                       ORDER BY received_at LIMIT %s""", (limit,))
+        rows = cur.fetchall()
+
+    done = 0
+    for r in rows:
+        extract_and_store(r["id"], r["text"], r["lang"])
+        with db.get_cursor() as cur:
+            cur.execute("SELECT extraction_status FROM feedback.feedback_entries WHERE id=%s",
+                        (r["id"],))
+            if (cur.fetchone() or {}).get("extraction_status") == "done":
+                done += 1
+    failed = len(rows) - done
+    logger.info("extract-pending: %d attempted, %d done, %d failed",
+                len(rows), done, failed)
+    return {"attempted": len(rows), "done": done, "failed": failed}
 
 
 def extract_and_store(feedback_id: int, text: str, lang: Optional[str]) -> None:

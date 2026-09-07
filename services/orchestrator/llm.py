@@ -11,6 +11,8 @@ import logging
 from functools import lru_cache
 from typing import Any
 
+from pydantic import ValidationError
+
 from . import fixtures, ledger
 from .config import BASELINES, settings
 from .state import Adaptation, Plan
@@ -29,7 +31,8 @@ prevents it.
 
 Rules:
 - Only use the four permitted actions. Never invent an action.
-- A need that maps to no existing SKU must become a `flag_for_human` step.
+- CRITICAL: `request_quote`, `place_order` and `reallocate_lot` are executable and each MUST carry an integer `qty` of 1 or more. A qty of 0 is valid only on `flag_for_human`.
+- If you are unsure of a quantity, need to request a quote, or a need maps to no existing SKU, use the `flag_for_human` action instead.
 - Prefer the vendor whose lead time beats the projected stockout date.
 - If the price forecast says BUY_NOW, do not defer an order to a later cycle.
 - `already_on_the_way` lists stock ALREADY ordered and not yet delivered. Do
@@ -71,20 +74,75 @@ def _client():
     )
 
 
-def _call(model: str, max_tokens: int, system: str, user: str, schema: type):
-    """One structured Bedrock request, budget-checked and ledgered."""
-    ledger.check_budget()          # refuses rather than overspending
-    resp = _client().messages.parse(
-        model=model,
-        max_tokens=max_tokens,
-        system=[{"type": "text", "text": system,
-                 "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user}],
-        output_format=schema,
+# Appended to the user turn when a response fails schema validation. Naming the
+# real action verbs matters: the model was emitting qty=0 on executable steps,
+# and the system prompt's generic phrasing ("like `order`") named no verb it
+# could actually match against.
+_REPAIR_TEMPLATE = """
+
+Your previous response was REJECTED by schema validation:
+{errors}
+
+Re-emit the entire object, corrected. Reminders:
+- `request_quote`, `place_order` and `reallocate_lot` are executable and each
+  requires an integer `qty` of 1 or more.
+- If you cannot justify a concrete quantity, emit `flag_for_human` (qty 0 is
+  valid there, and only there) rather than an executable step with qty 0.
+- `place_order` and `request_quote` require `vendor_id`; `reallocate_lot`
+  requires `lot_id`."""
+
+
+def _errors(exc: ValidationError) -> str:
+    """Pydantic errors as a short bulleted list the model can act on."""
+    return "\n".join(
+        f"- {'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg']}"
+        for e in exc.errors()[:5]
     )
-    led = ledger.record(model, resp.usage)
-    log.info("bedrock %s -> %s", model, ledger.summary())
-    return resp.parsed_output, led
+
+
+def _call(model: str, max_tokens: int, system: str, user: str, schema: type):
+    """One structured Bedrock request, budget-checked and ledgered.
+
+    Retries once on a schema violation. Haiku intermittently breaks a PlanStep
+    invariant -- qty=0 on an executable action is the one seen in practice --
+    and previously that halted the whole run, throwing away the SENSE and
+    price-forecast work already paid for and showing the operator a dead end
+    ("AI generated an invalid plan ... Please retry") they could only resolve
+    by starting over. Handing the validation error back costs one extra Haiku
+    call and lets the model correct itself.
+
+    The failed attempt's tokens are spent but not ledgered: the SDK raises
+    during parsing, so there is no usage object to record. check_budget still
+    runs before each attempt, so this cannot outrun the budget.
+    """
+    content = user
+    for attempt in (1, 2):
+        ledger.check_budget()      # refuses rather than overspending
+        try:
+            resp = _client().messages.parse(
+                model=model,
+                max_tokens=max_tokens,
+                # Cached on the system prompt, which is identical across the
+                # repair call -- only the user turn grows, so the cache holds.
+                system=[{"type": "text", "text": system,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": content}],
+                output_format=schema,
+            )
+        except ValidationError as exc:
+            if attempt == 2:
+                log.error("bedrock %s: schema violation survived repair: %s",
+                          model, exc)
+                raise
+            errors = _errors(exc)
+            log.warning("bedrock %s: schema violation, repairing:\n%s",
+                        model, errors)
+            content = user + _REPAIR_TEMPLATE.format(errors=errors)
+            continue
+
+        led = ledger.record(model, resp.usage)
+        log.info("bedrock %s -> %s (attempt %d)", model, ledger.summary(), attempt)
+        return resp.parsed_output, led
 
 
 def _compact(sow: dict[str, Any]) -> dict[str, Any]:
