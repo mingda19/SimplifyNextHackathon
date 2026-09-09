@@ -48,6 +48,14 @@ class LogIn(BaseModel):
     password: str
 
 
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+    # Confirmation matching is a client-side UX check (the settings form
+    # verifies new_password == confirm before ever submitting) -- the server
+    # only needs the one new value it is actually going to hash and store.
+
+
 class RecipientIn(BaseModel):
     email: EmailStr
     password: str
@@ -156,6 +164,27 @@ def logout(user: dict = Depends(current_user)):
 @app.get("/auth/me")
 def me(user: dict = Depends(current_user)):
     return {"user": user}
+
+
+@app.post("/auth/change-password")
+def change_password(payload: ChangePassword, user: dict = Depends(current_user)):
+    with db.get_cursor() as cur:
+        cur.execute("SELECT id, password_hash FROM auth.users WHERE id=%s", (int(user["sub"]),))
+        row = cur.fetchone()
+    if not row or not verify_password(payload.current_password, row["password_hash"]):
+        raise HTTPException(401, "current password is incorrect")
+
+    problems = password_problems(payload.new_password)
+    if problems:
+        raise HTTPException(422, {"code": "WEAK_PASSWORD",
+                                  "message": "Password needs " + ", ".join(problems),
+                                  "problems": problems})
+
+    with db.get_cursor() as cur:
+        cur.execute("UPDATE auth.users SET password_hash=%s WHERE id=%s",
+                    (hash_password(payload.new_password), row["id"]))
+    logger.info("password changed: user id %s", row["id"])
+    return {"ok": True}
 
 
 # ----------------------------------------------------- recipient management --

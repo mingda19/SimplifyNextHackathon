@@ -289,6 +289,24 @@ class Operation(Base):
     result: Mapped[dict] = mapped_column(JSON, nullable=False)
 
 
+class Settings(Base):
+    """User-editable procurement settings. One row, always id=1.
+
+    Replaces the hardcoded `BASELINES["monthly_budget_sgd"]` constant as the
+    source of truth for the actual spend check in
+    `app/services/vendors.py::place_order`; `BASELINES` remains only as the
+    seed default this table's row starts from.
+    """
+    __tablename__ = "settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    monthly_budget_sgd: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_by: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    __table_args__ = (CheckConstraint("id = 1", name="settings_id_singleton"),)
+
+
 __all__ = [
     "Base",
     "Item",
@@ -296,6 +314,7 @@ __all__ = [
     "LotSource",
     "Order",
     "OrderStatus",
+    "Settings",
     "Vendor",
     "VendorOffer",
 ]
