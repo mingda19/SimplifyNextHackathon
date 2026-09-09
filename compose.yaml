@@ -84,20 +84,22 @@ services:
     build:
       context: .
       dockerfile: services/feedback/Dockerfile
-    # Same env_file as orchestrator. Without it this container received no AWS
-    # credentials at all, so every extraction failed with "could not resolve
-    # credentials from session" while the orchestrator -- which did have
-    # env_file -- called Bedrock fine.
     env_file:
       - .env
     environment:
       <<: *service-env
       INVENTORY_URL: http://inventory:8000
       AUTH_URL: http://auth:8001
+      # Explicitly bypass all internal pathing issues by using the universal /tmp folder
+      HOME: /tmp
+      AWS_CONFIG_FILE: /tmp/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /tmp/.aws/credentials
     ports: ["127.0.0.1:8002:8002"]
     depends_on:
       schema-bootstrap:
         condition: service_completed_successfully
+    volumes:
+      - ~/.aws:/tmp/.aws:ro
 
   orchestrator:
     build:
@@ -113,8 +115,13 @@ services:
       PRICING_URL: http://price-forecaster:8004
       CHECKPOINT_PATH: /data/checkpoints.db
       LEDGER_PATH: /data/spend.json
+      # Explicitly bypass all internal pathing issues by using the universal /tmp folder
+      HOME: /tmp
+      AWS_CONFIG_FILE: /tmp/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /tmp/.aws/credentials
     volumes:
       - orchestrator_data:/data
+      - ~/.aws:/tmp/.aws:ro
     ports: ["127.0.0.1:8003:8003"]
     depends_on:
       schema-bootstrap:
