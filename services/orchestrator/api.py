@@ -64,6 +64,18 @@ def _graph():
     return _GRAPH
 
 
+@app.on_event("shutdown")
+def _close_graph():
+    """Close the singleton's sqlite connection once, on process exit.
+
+    Per-request handlers must never do this themselves (see the comments in
+    _run_graph and decide) -- it is the whole reason a shared singleton
+    exists instead of a connection per request.
+    """
+    if _GRAPH is not None:
+        _GRAPH.checkpointer.conn.close()
+
+
 @contextmanager
 def _conn():
     dsn = _DIALECT.sub("postgresql://", os.getenv("DATABASE_URL", ""))
@@ -94,7 +106,7 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
     """Execute until the approval interrupt, then park the summary."""
     graph = None
     try:
-        graph = compile_graph()
+        graph = _graph()
         cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 256}
         result = graph.invoke(new_state(thread_id, charity_type), cfg)
         if "__interrupt__" in result:
@@ -117,10 +129,12 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
         logger.exception("run %s failed", thread_id)
         _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
-
-    finally:
-        if graph is not None:
-            graph.checkpointer.conn.close()
+    # No `finally: graph.checkpointer.conn.close()` here anymore. `graph` is
+    # the process-wide singleton from _graph(), not a private per-request
+    # connection -- closing it here closed it for every run after the first,
+    # turning every subsequent invoke() into "Cannot operate on a closed
+    # database." It gets closed exactly once now, for real, in the shutdown
+    # handler below.
 
 
 @app.get("/health")
@@ -205,8 +219,12 @@ def decide(thread_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=409, detail=f"run is '{row['status']}', not awaiting approval")
 
     # 3. Resume the LangGraph Agent
-    # Instantiate a fresh graph to avoid cross-thread DB connection sharing issues
-    graph = compile_graph()
+    # Shared singleton, not a fresh compile_graph() per request: SqliteSaver
+    # guards its connection with its own internal threading.Lock (see
+    # langgraph.checkpoint.sqlite), so cross-thread access is already safe.
+    # A fresh compile_graph() here doesn't buy safety -- it re-leaks the fd
+    # per request, the exact bug _graph() above exists to prevent.
+    graph = _graph()
     cfg = {"configurable": {"thread_id": thread_id}}
     result = None
     
@@ -228,11 +246,11 @@ def decide(thread_id: str, payload: dict = Body(...)):
             pass
             
         raise HTTPException(status_code=500, detail=f"resume failed: {exc}") from exc
-        
-    finally:
-        # Prevent connection leaks
-        if graph is not None:
-            graph.checkpointer.conn.close()
+
+    # No `finally: graph.checkpointer.conn.close()` here anymore -- same
+    # reasoning as _run_graph above: `graph` is the shared singleton, and
+    # closing it after the first decision poisoned every decision after it
+    # with "Cannot operate on a closed database."
 
     # 4. Save Final Outcome to Database (Checking for subsequent interrupts)
     if result is None:

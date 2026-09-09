@@ -37,11 +37,20 @@ import dataset as D
 import xgboost_model as X
 
 HERE = Path(__file__).resolve().parent
-# Two levels up from the local source tree (services/price_forecaster/forecast.py).
-# The Docker image copies this service flat into /app with no repo root above
-# it, so fall back to HERE there -- load_dotenv below is then a silent no-op
-# and Compose's own `environment:` block is the config source instead.
-REPO_ROOT = HERE.parents[1] if len(HERE.parents) > 1 else HERE
+# Two levels up from the local source tree (services/price_forecaster/forecast.py)
+# lands on the real repo root -- but only when running from a checkout. The
+# Docker image copies this service flat into /app with no repo root above it,
+# so "two levels up" from /app is just "/", which has no `services/` dir.
+# `len(HERE.parents) > 1` doesn't catch that case (`/app` still has 2 parents:
+# `/app`, `/`), so it used to resolve to `/` in the container -- silently
+# breaking `data/dspi_features.py` resolution below. Checking for a `services/`
+# sibling is what actually tells the two layouts apart; fall back to HERE
+# (`/app`) when it isn't there. load_dotenv below is then a no-op in the
+# container and Compose's own `environment:` block is the config source
+# instead -- data/dspi_features.py must still be copied to `/app/data/` in the
+# Dockerfile for the fallback branch to resolve.
+_candidate = HERE.parents[1] if len(HERE.parents) > 1 else HERE
+REPO_ROOT = _candidate if (_candidate / "services").is_dir() else HERE
 
 # The root .env is the single control point for the whole project. Without this
 # the gate could only be changed by editing source, and a teammate setting

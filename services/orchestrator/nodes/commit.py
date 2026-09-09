@@ -147,8 +147,3 @@ def commit(state: AgentState) -> dict[str, Any]:
                           "committed": len(committed), "declined": len(declined),
                           "skipped": len(skipped),
                           "feedback_resolved": resolution.get("resolved", 0)}]}
-
-
-def reset_idempotency() -> None:
-    """Clear the commit guard. Tests and long-lived processes only."""
-    _COMMITTED.clear()

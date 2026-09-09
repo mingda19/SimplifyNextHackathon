@@ -187,8 +187,3 @@ def make_serving_features(data_dir: Path = DATA) -> pd.DataFrame:
     cats = sorted(df.columns)
     out["commodity"] = pd.Categorical(out["commodity"], categories=cats)
     return out
-
-
-def commodity_names(data_dir: Path = DATA) -> list[str]:
-    df, _ = load_matrix(data_dir)
-    return list(df.columns)
