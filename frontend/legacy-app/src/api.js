@@ -40,6 +40,10 @@ async function request(path, { method = 'GET', body, auth = true, idempotencyKey
 export const api = {
   // --- auth ---------------------------------------------------------------
   passwordPolicy: () => request('/api/auth/auth/password-policy', { auth: false }),
+  changePassword: (current_password, new_password) => request('/api/auth/auth/change-password', {
+    method: 'POST',
+    body: { current_password, new_password },
+  }),
   signup: b => request('/api/auth/auth/signup', { method: 'POST', body: b, auth: false }),
   login:  b => request('/api/auth/auth/login',  { method: 'POST', body: b, auth: false }),
   me:     () => request('/api/auth/auth/me'),
@@ -53,6 +57,11 @@ export const api = {
 
   // --- inventory ----------------------------------------------------------
   stock: () => request('/api/inventory/inventory'),
+  getSettings: () => request('/api/inventory/settings'),
+  updateSettings: monthly_budget_sgd => request('/api/inventory/settings', {
+    method: 'PATCH',
+    body: { monthly_budget_sgd },
+  }),
   stockItem: sku => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`),
   createStock: b => request('/api/inventory/inventory', { method: 'POST', body: b }),
   updateStock: (sku, b) => request(`/api/inventory/inventory/${encodeURIComponent(sku)}`, { method: 'PATCH', body: b }),
@@ -85,5 +94,9 @@ export const api = {
   runs: status => request(`/api/agent/agent/runs${status ? '?status=' + status : ''}`),
   run: id => request(`/api/agent/agent/runs/${id}`),
   startRun: charity_type => request('/api/agent/agent/runs', { method: 'POST', body: { charity_type } }),
-  // decide: (id, decision, by) => request(`/api/agent/agent/runs/${id}/decision`, { method: 'POST', body: { decision, decided_by: by } }),
+  getWatch: () => request('/api/agent/agent/watch'),
+  setWatch: (active, charity_type) => request('/api/agent/agent/watch', {
+    method: 'POST',
+    body: { active, charity_type },
+  }),
 }

@@ -30,9 +30,10 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.types import Command
 
+from orchestrator import watch
 from orchestrator.config import settings
 from orchestrator.graph import compile_graph
-from orchestrator.nodes.approval import build_summary
+from orchestrator.nodes.finalize import build_summary
 from orchestrator.state import APPROVAL_VERSION, new_state
 
 logging.basicConfig(level=logging.INFO)
@@ -62,6 +63,18 @@ def _graph():
             if _GRAPH is None:
                 _GRAPH = compile_graph()
     return _GRAPH
+
+
+@app.on_event("shutdown")
+def _close_graph():
+    """Close the singleton's sqlite connection once, on process exit.
+
+    Per-request handlers must never do this themselves (see the comments in
+    _run_graph and decide) -- it is the whole reason a shared singleton
+    exists instead of a connection per request.
+    """
+    if _GRAPH is not None:
+        _GRAPH.checkpointer.conn.close()
 
 
 @contextmanager
@@ -94,7 +107,7 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
     """Execute until the approval interrupt, then park the summary."""
     graph = None
     try:
-        graph = compile_graph()
+        graph = _graph()
         cfg = {"configurable": {"thread_id": thread_id}, "recursion_limit": 256}
         result = graph.invoke(new_state(thread_id, charity_type), cfg)
         if "__interrupt__" in result:
@@ -117,18 +130,21 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
         logger.exception("run %s failed", thread_id)
         _sql("UPDATE agent.runs SET status='failed', error=%s WHERE thread_id=%s",
              (f"{type(exc).__name__}: {exc}", thread_id))
-
-    finally:
-        if graph is not None:
-            graph.checkpointer.conn.close()
+    # No `finally: graph.checkpointer.conn.close()` here anymore. `graph` is
+    # the process-wide singleton from _graph(), not a private per-request
+    # connection -- closing it here closed it for every run after the first,
+    # turning every subsequent invoke() into "Cannot operate on a closed
+    # database." It gets closed exactly once now, for real, in the shutdown
+    # handler below.
 
 
 @app.get("/health")
 def health():
     try:
         n = _sql("SELECT count(*) AS n FROM agent.runs", fetch="one")["n"]
-        return {"status": "ok", "runs": n, "fake_llm": settings.fake_llm,
-                "model": settings.model_predict}
+        return {"status": "ok", "runs": n,
+                "model": settings.model_predict,
+                "session_spend_cap_usd": settings.max_session_spend_usd}
     except Exception as exc:  # noqa: BLE001
         return {"status": "degraded", "detail": str(exc)}
 
@@ -141,17 +157,52 @@ class DecisionRequest(BaseModel):
     decision: Literal["approved", "rejected"]
 
 
-@app.post("/agent/runs", status_code=202)
-def start_run(payload: RunRequest = Body(default=RunRequest()), user: dict = Depends(require_charity)):
-    charity_type = payload.charity_type
-    if charity_type not in ("A", "B"):
-        raise HTTPException(400, "charity_type must be 'A' or 'B'")
+class WatchRequest(BaseModel):
+    active: bool
+    charity_type: Literal["A", "B"] = "B"
+
+
+def _create_run(charity_type: str) -> str:
+    """Insert the row and kick off the background graph run. Shared by the
+    manual `POST /agent/runs` handler and `watch.py`'s poller, so an
+    event-triggered run and a button-triggered run are indistinguishable
+    once started."""
     thread_id = f"run-{uuid.uuid4().hex[:10]}"
     _sql("""INSERT INTO agent.runs (thread_id, charity_type, status)
             VALUES (%s,%s,'running')""", (thread_id, charity_type))
     threading.Thread(target=_run_graph, args=(thread_id, charity_type),
                      daemon=True).start()
+    return thread_id
+
+
+def _has_run_in_flight() -> bool:
+    row = _sql("""SELECT 1 FROM agent.runs
+                  WHERE status IN ('running','pending_approval','committing')
+                  LIMIT 1""", fetch="one")
+    return row is not None
+
+
+@app.post("/agent/runs", status_code=202)
+def start_run(payload: RunRequest = Body(default=RunRequest()), user: dict = Depends(require_charity)):
+    charity_type = payload.charity_type
+    if charity_type not in ("A", "B"):
+        raise HTTPException(400, "charity_type must be 'A' or 'B'")
+    thread_id = _create_run(charity_type)
     return {"thread_id": thread_id, "status": "running"}
+
+
+@app.get("/agent/watch")
+def get_watch(user: dict = Depends(require_charity)):
+    """Current event-driven watch state -- see `watch.py` for the two
+    trigger conditions and the auto-shutdown rule."""
+    return watch.snapshot()
+
+
+@app.post("/agent/watch")
+def set_watch(payload: WatchRequest, user: dict = Depends(require_charity)):
+    if payload.active:
+        return watch.activate(payload.charity_type, _create_run, _has_run_in_flight)
+    return watch.deactivate()
 
 
 @app.get("/agent/runs")
@@ -205,8 +256,12 @@ def decide(thread_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=409, detail=f"run is '{row['status']}', not awaiting approval")
 
     # 3. Resume the LangGraph Agent
-    # Instantiate a fresh graph to avoid cross-thread DB connection sharing issues
-    graph = compile_graph()
+    # Shared singleton, not a fresh compile_graph() per request: SqliteSaver
+    # guards its connection with its own internal threading.Lock (see
+    # langgraph.checkpoint.sqlite), so cross-thread access is already safe.
+    # A fresh compile_graph() here doesn't buy safety -- it re-leaks the fd
+    # per request, the exact bug _graph() above exists to prevent.
+    graph = _graph()
     cfg = {"configurable": {"thread_id": thread_id}}
     result = None
     
@@ -228,11 +283,11 @@ def decide(thread_id: str, payload: dict = Body(...)):
             pass
             
         raise HTTPException(status_code=500, detail=f"resume failed: {exc}") from exc
-        
-    finally:
-        # Prevent connection leaks
-        if graph is not None:
-            graph.checkpointer.conn.close()
+
+    # No `finally: graph.checkpointer.conn.close()` here anymore -- same
+    # reasoning as _run_graph above: `graph` is the shared singleton, and
+    # closing it after the first decision poisoned every decision after it
+    # with "Cannot operate on a closed database."
 
     # 4. Save Final Outcome to Database (Checking for subsequent interrupts)
     if result is None:

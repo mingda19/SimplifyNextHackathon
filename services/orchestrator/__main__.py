@@ -24,13 +24,11 @@ from .state import new_state
 
 
 def _banner() -> None:
-    mode = []
-    mode.append("FAKE_LLM" if settings.fake_llm else "REAL BEDROCK")
-    mode.append("FAKE_SERVICES" if settings.fake_services else "REAL SERVICES")
+    mode = ["REAL BEDROCK",
+            "FAKE_SERVICES" if settings.fake_services else "REAL SERVICES"]
     print(f"\n\033[1mPantry orchestrator\033[0m  [{' · '.join(mode)}]")
-    if not settings.fake_llm:
-        print(f"  \033[33m! spending real money on {settings.model_predict} "
-              f"in {settings.aws_region}\033[0m")
+    print(f"  \033[33m! spending real money on {settings.model_predict} "
+          f"in {settings.aws_region} — cap ${settings.max_session_spend_usd:.2f}\033[0m")
     print(f"  ledger: {ledger.summary()}\n")
 
 
@@ -44,10 +42,14 @@ def _show(summary: dict) -> None:
         gap = "  \033[31m[NO MATCHING SKU]\033[0m" if n.get("gap") else ""
         print(f"  need          : {n['need']} (x{n['frequency']}, "
               f"urgency {n['urgency']}){gap}")
-    ps = s["price_signal"]
-    print(f"  price         : {ps.get('series')} {ps.get('direction')} "
-          f"{ps.get('pct_change_3m')}% -> {ps.get('recommendation')} "
-          f"(data lag {ps.get('data_lag_months')}mo)")
+    # `price_signal` (singular) never existed on build_summary's output --
+    # this always was `price_signals`, a list, one entry per actionable
+    # commodity. Fixed here while touching this file for the tool-calling
+    # rearchitecture; unrelated to it otherwise.
+    for ps in s["price_signals"]:
+        print(f"  price         : {ps.get('series')} {ps.get('direction')} "
+              f"{ps.get('pct_change_3m')}% -> {ps.get('recommendation')} "
+              f"(data lag {ps.get('data_lag_months')}mo)")
     if s["unavailable_services"]:
         print(f"  \033[33mdegraded      : {', '.join(s['unavailable_services'])}\033[0m")
 

@@ -1,81 +1,46 @@
 """Graph assembly and routing.
 
-    sense -> predict -> act -> [approval] -> commit -> END
-                         ^      |
-                         └ adapt ┘        max 3 retries per step, then escalate
+    seed -> agent <-> tools (ToolNode)
+             |
+             `-- tools_condition: no tool call -> finalize -> END
+
+All hand-written routing from the old fixed-step design is gone: `agent`'s
+last message either carries tool calls (`tools_condition` returns "tools",
+`ToolNode` executes them, loops back to `agent`) or it doesn't (routes to
+`finalize`, which builds the approval summary, blocks on `interrupt()`, and
+commits on resume).
 """
 from __future__ import annotations
 
-import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
 
 from .config import settings
-from .nodes import act, adapt, approval, commit, predict, sense
+from .nodes import agent, finalize, seed
 from .state import AgentState
-
-log = logging.getLogger(__name__)
-
-
-# ------------------------------------------------------------------ routing --
-def route_after_predict(state: AgentState) -> str:
-    if state.get("halt_reason"):
-        return END
-    plan = state.get("plan")
-    if not plan or not plan.get("steps"):
-        log.info("route: no actionable steps — ending")
-        return END
-    return "act"
-
-
-def route_after_act(state: AgentState) -> str:
-    if state.get("halt_reason"):
-        return "approval"
-    if state.get("last_error"):
-        return "adapt"
-    plan = state.get("plan") or {}
-    if state.get("current_step", 0) < len(plan.get("steps", [])):
-        return "act"          # more steps to work through
-    return "approval"
-
-
-def route_after_adapt(state: AgentState) -> str:
-    # halt_reason here means the retry cap was hit or the budget ran out.
-    # Either way a human needs to see it — escalate, never loop.
-    if state.get("halt_reason"):
-        return "approval"
-    return "act"
-
-
-def route_after_approval(state: AgentState) -> str:
-    return "commit" if state.get("approval") == "approved" and not state.get("halt_reason") else END
+from .tools import TOOLS
 
 
 # ------------------------------------------------------------------- build --
 def build_graph() -> StateGraph:
     g = StateGraph(AgentState)
 
-    g.add_node("sense", sense)
-    g.add_node("predict", predict)
-    g.add_node("act", act)
-    g.add_node("adapt", adapt)
-    g.add_node("approval", approval)
-    g.add_node("commit", commit)
+    g.add_node("seed", seed)
+    g.add_node("agent", agent)
+    g.add_node("tools", ToolNode(TOOLS))
+    g.add_node("finalize", finalize)
 
-    g.add_edge(START, "sense")
-    g.add_edge("sense", "predict")
-    g.add_conditional_edges("predict", route_after_predict, {"act": "act", END: END})
-    g.add_conditional_edges("act", route_after_act,
-                            {"act": "act", "adapt": "adapt", "approval": "approval"})
-    g.add_conditional_edges("adapt", route_after_adapt,
-                            {"act": "act", "approval": "approval"})
-    g.add_conditional_edges("approval", route_after_approval,
-                            {"commit": "commit", END: END})
-    g.add_edge("commit", END)
+    g.add_edge(START, "seed")
+    g.add_edge("seed", "agent")
+    g.add_conditional_edges("agent", tools_condition,
+                            {"tools": "tools", END: "finalize"})
+    g.add_edge("tools", "agent")
+    g.add_edge("finalize", END)
     return g
 
 

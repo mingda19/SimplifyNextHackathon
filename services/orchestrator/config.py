@@ -29,8 +29,9 @@ class Settings:
     """Runtime settings. Read once at import."""
 
     # --- cost controls (see plan.md §7) -----------------------------------
-    # FAKE_LLM=1 is the default ON PURPOSE. Turning it off spends real money.
-    fake_llm: bool = _flag("FAKE_LLM", "1")
+    # No FAKE_LLM toggle: the agent node always calls real Bedrock. The
+    # session-spend cap below (checked before every single call, never just
+    # once at loop start) is the safety net instead of a fake-mode fallback.
     fake_services: bool = _flag("FAKE_SERVICES", "0")
     # Per-service overrides, each defaulting to FAKE_SERVICES. Lets workstreams
     # be integrated one at a time as they land instead of all-or-nothing.
@@ -62,8 +63,29 @@ class Settings:
     http_timeout: float = float(os.getenv("HTTP_TIMEOUT", "5.0"))
 
     # --- graph ------------------------------------------------------------
-    max_retries: int = min(3, max(0, int(os.getenv("MAX_ADAPT_RETRIES", "3"))))
+    # Caps LLM turns in the agent node. Every tool-call round needs one
+    # preceding LLM turn, so this alone bounds total tool executions too --
+    # the old per-step `max_retries` (adapt.py) no longer applies since there
+    # is no separate adapt node; this is its replacement, sized for a full
+    # sense->diagnose->act(->retry)*->done loop rather than just retries.
+    max_agent_turns: int = max(1, int(os.getenv("MAX_AGENT_TURNS", "10")))
     checkpoint_path: Path = Path(os.getenv("CHECKPOINT_PATH", str(ROOT / "checkpoints.db")))
+
+    # --- watch mode (event-driven runs, see watch.py) ----------------------
+    # How often the background poller checks whether enough has changed to
+    # justify a run. 1 minute matches the product spec directly.
+    watch_poll_seconds: float = float(os.getenv("WATCH_POLL_SECONDS", "60"))
+    # Trigger A: this many NEW feedback rows since the last check.
+    watch_feedback_trigger: int = int(os.getenv("WATCH_FEEDBACK_TRIGGER", "10"))
+    # Trigger B: inventory "shifts by a lot" -- this many MORE SKUs newly in
+    # `below_reorder`/`expiring_soon` since the last check (a delta, not an
+    # absolute count, so a persistently-high-but-unchanged alert count does
+    # not re-trigger every cycle).
+    watch_inventory_trigger: int = int(os.getenv("WATCH_INVENTORY_TRIGGER", "3"))
+    # Auto-deactivate after this many consecutive idle polls (no trigger, no
+    # run in flight) -- an activated watch that never sees anything worth
+    # acting on should not poll forever.
+    watch_quiet_cycles_limit: int = int(os.getenv("WATCH_QUIET_CYCLES_LIMIT", "2"))
 
 
 settings = Settings()

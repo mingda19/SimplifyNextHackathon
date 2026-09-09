@@ -16,7 +16,7 @@ from app.errors import (
     NotFoundError,
     OutOfStockError,
 )
-from app.models import Item, Order, OrderStatus, Vendor, VendorOffer
+from app.models import Item, Order, OrderStatus, Settings, Vendor, VendorOffer
 from app.schemas import (
     VendorOrderRequest,
     VendorOrderResponse,
@@ -30,6 +30,19 @@ from pantry_common.baselines import BASELINES
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _monthly_budget(db: Session) -> Decimal:
+    """User-editable, via `PATCH /settings` -- see app/routers/settings.py.
+
+    `BASELINES["monthly_budget_sgd"]` used to be read directly here; that
+    made the cap a source-code constant nobody without a deploy could change.
+    Falls back to the static default only if the settings row is somehow
+    missing (a deployment that skipped the seed insert), so this can never
+    hard-fail an order on a missing row.
+    """
+    row = db.get(Settings, 1)
+    return row.monthly_budget_sgd if row is not None else Decimal(str(BASELINES["monthly_budget_sgd"]))
 
 
 def _load_request_context(
@@ -409,7 +422,7 @@ def place_vendor_order(
     spent = db.scalar(select(func.coalesce(func.sum(Order.qty * Order.unit_price_sgd), 0)).where(
         Order.placed_at >= month_start, Order.placed_at < next_month,
         Order.status != OrderStatus.CANCELLED))
-    if Decimal(spent) + price.total_price_sgd > Decimal(str(BASELINES["monthly_budget_sgd"])):
+    if Decimal(spent) + price.total_price_sgd > _monthly_budget(db):
         raise idempotency.conflict("MONTHLY_BUDGET_EXCEEDED", "This order would exceed the monthly procurement budget.")
 
     order = Order(

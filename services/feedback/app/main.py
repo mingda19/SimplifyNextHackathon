@@ -19,11 +19,12 @@ from typing import Optional
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import Json
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import db
 from app.config import settings
 from app.extract import resolve_skus, run_extraction, run_sentiment_classifier
+from app.matcher import match_term
 from app.unmet_needs import aggregate as aggregate_unmet_needs
 
 logger = logging.getLogger("feedback.main")
@@ -58,23 +59,29 @@ def on_startup() -> None:
     db.init_pool()
 
 
-@app.post("/feedback", status_code=201)
+@app.post("/feedback", status_code=202)
 def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
-    """Store the message, then extract it BEFORE returning.
+    """Store the message and return immediately. Extraction runs in the
+    background.
 
-    Extraction used to run in a Starlette BackgroundTask. That made the request
-    fast, but it also meant a message posted through the intake screen was not
-    yet extracted when the agent next ran — so /feedback/unmet-needs did not see
-    it and SENSE had nothing to go on. Worse, a failing background task failed
-    silently: the row sat at extraction_status='pending' forever with nobody
-    watching.
+    This was briefly made synchronous (commit the row, run extraction inline,
+    THEN respond) so a message was guaranteed visible to the agent right
+    away. In practice that meant the beneficiary's screen sat on a spinner
+    for however long the Bedrock call took -- real, noticeable latency on
+    what should be a "thank you, we heard you" moment. The raw text, lang,
+    and channel are committed to the DB before this function does anything
+    else either way, so the words are never at risk regardless of extraction
+    timing.
 
-    Running it inline makes a new message immediately visible to the agent and
-    surfaces failures to the caller. The raw text is still INSERTed and
-    committed first, so the beneficiary's words survive even if extraction dies.
+    Freshness is instead the `feedback_extraction` orchestrator tool's job:
+    every time the agent calls it, it first sweeps up anything still
+    `pending`/`failed` via `extract_pending()` before reading unmet needs, so
+    a message posted seconds ago is caught up by the time the agent actually
+    looks -- see `tools/feedback_extraction.py`. A failed extraction here
+    just leaves the row `failed`; nothing is lost, it's retried the same way.
 
-    Set FEEDBACK_ASYNC_EXTRACTION=1 to restore the old background behaviour if
-    extraction latency ever becomes a problem on the intake screen.
+    Set FEEDBACK_SYNC_EXTRACTION=1 to force the old inline behaviour (mostly
+    useful for a demo where you want the extracted fields in this response).
     """
     with db.get_cursor() as cur:
         cur.execute(
@@ -87,23 +94,22 @@ def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
         )
         feedback_id = cur.fetchone()["id"]
 
-    if _flag("FEEDBACK_ASYNC_EXTRACTION"):
-        logger.info("feedback %s received, extraction queued (async mode)", feedback_id)
-        background_tasks.add_task(extract_and_store, feedback_id,
-                                  payload.text, payload.lang)
-        return {"id": feedback_id, "status": "received",
-                "extraction_status": "pending"}
+    if _flag("FEEDBACK_SYNC_EXTRACTION"):
+        # extract_and_store never raises — it records extraction_status='failed'
+        # and keeps the raw row — so a bad extraction cannot lose the message.
+        extract_and_store(feedback_id, payload.text, payload.lang)
+        with db.get_cursor() as cur:
+            cur.execute("""SELECT extraction_status, urgency, mentioned_skus, summary_en
+                           FROM feedback.feedback_entries WHERE id=%s""", (feedback_id,))
+            row = cur.fetchone() or {}
+        logger.info("feedback %s stored and extracted -> %s",
+                    feedback_id, row.get("extraction_status"))
+        return {"id": feedback_id, "status": "received", **row}
 
-    # extract_and_store never raises — it records extraction_status='failed'
-    # and keeps the raw row — so a bad extraction cannot lose the message.
-    extract_and_store(feedback_id, payload.text, payload.lang)
-    with db.get_cursor() as cur:
-        cur.execute("""SELECT extraction_status, urgency, mentioned_skus, summary_en
-                       FROM feedback.feedback_entries WHERE id=%s""", (feedback_id,))
-        row = cur.fetchone() or {}
-    logger.info("feedback %s stored and extracted -> %s",
-                feedback_id, row.get("extraction_status"))
-    return {"id": feedback_id, "status": "received", **row}
+    logger.info("feedback %s received, extraction queued", feedback_id)
+    background_tasks.add_task(extract_and_store, feedback_id,
+                              payload.text, payload.lang)
+    return {"id": feedback_id, "status": "received", "extraction_status": "pending"}
 
 
 @app.post("/feedback/extract-pending")
@@ -256,10 +262,59 @@ def get_feedback(
         return cur.fetchall()
 
 
+@app.get("/feedback/count")
+def count_feedback(since: Optional[datetime] = None):
+    """Row count only -- for the orchestrator's watch-mode poller, which
+    checks this every WATCH_POLL_SECONDS and must not pull the whole table
+    (thousands of rows in a seeded dataset) just to see if 10 more arrived.
+    """
+    where = "WHERE received_at >= %s" if since is not None else ""
+    params = (since,) if since is not None else ()
+    with db.get_cursor() as cur:
+        cur.execute(f"SELECT count(*) AS n FROM feedback.feedback_entries {where}", params)
+        return {"count": cur.fetchone()["n"]}
+
+
 @app.get("/feedback/unmet-needs")
 def get_unmet_needs(since: Optional[datetime] = None, min_confidence: float = 0.0):
     """Ranked unmet needs for the agent. `gap: true` = no stocked SKU covers it."""
     return aggregate_unmet_needs(since=since, min_confidence=min_confidence)
+
+
+class MatchSkusIn(BaseModel):
+    terms: list[str] = Field(min_length=1, max_length=20)
+    context: Optional[str] = None
+
+
+class SkuMatch(BaseModel):
+    term: str
+    matched_sku: Optional[str]
+    confidence: float
+    method: str
+    near_sku: Optional[str]
+    unmet_qualifier: Optional[str]
+
+
+class MatchSkusOut(BaseModel):
+    matches: list[SkuMatch]
+
+
+@app.post("/feedback/match-skus", response_model=MatchSkusOut)
+def match_skus(payload: MatchSkusIn) -> MatchSkusOut:
+    """Deterministic SKU matching only (layers 1-3: exact code, alias, fuzzy)
+    -- never LLM adjudication, and never persists anything. Built for the
+    orchestrator's `sku_matching` tool: an ad hoc "does a SKU exist for this
+    term" check that costs $0 and writes nothing, independent of whatever
+    MATCHER_LLM_ADJUDICATION is set to for the main extraction pipeline --
+    this endpoint always calls the matcher with `llm_adjudicate=None`.
+    """
+    matches = [
+        SkuMatch(term=term, matched_sku=r.matched_sku, confidence=r.confidence,
+                 method=r.method, near_sku=r.near_sku, unmet_qualifier=r.unmet_qualifier)
+        for term in payload.terms
+        for r in [match_term(term, llm_adjudicate=None, context=payload.context)]
+    ]
+    return MatchSkusOut(matches=matches)
 
 
 @app.get("/health")

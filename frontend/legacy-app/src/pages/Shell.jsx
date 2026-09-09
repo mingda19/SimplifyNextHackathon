@@ -39,6 +39,7 @@ export default function Shell() {
         </NavLink>
         <NavLink to="/feedback" className={link}>Beneficiary needs</NavLink>
         <NavLink to="/people" className={link}>People &amp; links</NavLink>
+        <NavLink to="/settings" className={link}>Settings</NavLink>
         <div className="side-foot">
           <div className="small" style={{ fontWeight: 600 }}>{user?.name}</div>
           <div className="small muted" style={{ marginBottom: 8 }}>{user?.email}</div>

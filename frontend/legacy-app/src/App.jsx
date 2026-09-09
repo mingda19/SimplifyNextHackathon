@@ -8,6 +8,7 @@ import Orders from './pages/Orders'
 import AgentActions from './pages/AgentActions'
 import Feedback from './pages/Feedback'
 import People from './pages/People'
+import Settings from './pages/Settings'
 import RequestPage from './pages/RequestPage'
 
 // Recipients get exactly one screen. The server enforces this too
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/agent" element={<AgentActions />} />
         <Route path="/feedback" element={<Feedback />} />
         <Route path="/people" element={<People />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -23,6 +23,8 @@ export default function AgentActions() {
   const [note, setNote] = useState("");
   const [creatingSku, setCreatingSku] = useState(null);
   const [charityType, setCharityType] = useState("B");
+  const [watch, setWatchState] = useState(null);
+  const [watchBusy, setWatchBusy] = useState(false);
 
   const load = () =>
     api
@@ -32,10 +34,19 @@ export default function AgentActions() {
         setErr(null);
       })
       .catch(setErr);
+
+  const loadWatch = () => api.getWatch().then(setWatchState).catch(() => {});
+
   useEffect(() => {
     load();
-    // A run takes tens of seconds; poll so the queue updates without a refresh.
-    const id = setInterval(load, 5000);
+    loadWatch();
+    // A run takes tens of seconds; poll so the queue (and watch status)
+    // updates without a refresh. Watch mode itself polls server-side every
+    // 60s -- this is just the UI catching up on what it already decided.
+    const id = setInterval(() => {
+      load();
+      loadWatch();
+    }, 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -54,18 +65,27 @@ export default function AgentActions() {
     }
   };
 
+  const toggleWatch = async () => {
+    setWatchBusy(true);
+    const active = !watch?.active;
+    try {
+      const w = await api.setWatch(active, charityType);
+      setWatchState(w);
+      setNote(
+        active
+          ? "Agent activated — it will act on its own once 10+ feedback messages arrive or inventory shifts a lot. It checks every minute and switches itself off after 2 quiet checks with nothing to do."
+          : "Agent deactivated.",
+      );
+    } catch (ex) {
+      setErr(ex);
+    } finally {
+      setWatchBusy(false);
+    }
+  };
+
   const decide = async (id, decision, approvedSteps) => {
     setBusy(true);
     try {
-      // FIX: Pass a single payload object that exactly matches your api.py schema
-      const payload = {
-        decision: decision,
-        decided_by: user?.email,
-        approved_steps: approvedSteps,
-      };
-
-      // Update this line to match how your api.js accepts object payloads
-      // (If api.decide expects (id, payload))
       const r = await api.decide(id, decision, user?.email, approvedSteps);
 
       const dec = r.outcome?.declined_steps?.length || 0;
@@ -76,7 +96,9 @@ export default function AgentActions() {
               `${
                 r.outcome?.kind === "purchase_order"
                   ? `Committed S$${(r.outcome.total_sgd ?? 0).toFixed(2)}.`
-                  : "Checklist issued."
+                  : r.outcome?.kind === "acquisition_checklist"
+                    ? "Checklist issued."
+                    : "No orders were committed — check the failure details."
               }` +
               `${res ? ` ${res} beneficiary message${res > 1 ? "s" : ""} marked resolved.` : ""}`
           : "Rejected — nothing was committed.",
@@ -130,8 +152,30 @@ export default function AgentActions() {
           <button className="btn-primary" onClick={start} disabled={busy}>
             {busy ? "Working…" : "Run agent now"}
           </button>
+          <button
+            className={watch?.active ? "btn-primary" : ""}
+            onClick={toggleWatch}
+            disabled={watchBusy}
+            title={
+              watch?.active
+                ? "Click to deactivate"
+                : "Agent watches on its own for 10+ new feedback messages or a big inventory shift, checking every minute"
+            }
+          >
+            {watchBusy ? "Working…" : watch?.active ? "Agent active ●" : "Activate agent"}
+          </button>
         </div>
       </div>
+
+      {watch?.active && (
+        <div className="banner banner-ok" style={{ marginBottom: 14 }}>
+          Watching for 10+ new feedback messages or a big inventory shift — checking every minute.
+          {watch.last_poll_at && ` Last checked ${new Date(watch.last_poll_at).toLocaleTimeString()}.`}
+          {watch.last_trigger_at && ` Last acted ${new Date(watch.last_trigger_at).toLocaleTimeString()}.`}
+          {" "}
+          Switches off on its own after {watch.quiet_cycles ?? 0}/2 quiet checks with nothing to do.
+        </div>
+      )}
 
       <Banner kind="ok">{note}</Banner>
       {err && <ServiceDown name="Orchestrator" error={err} />}
@@ -253,9 +297,6 @@ export default function AgentActions() {
 // The four panels the guardrail node emits. `adaptations` gets the most space
 // on purpose: it is the only place you can see the agent hit a wall and reason
 // its way around it, which is the difference between a workflow and an agent.
-// The four panels the guardrail node emits. `adaptations` gets the most space
-// on purpose: it is the only place you can see the agent hit a wall and reason
-// its way around it, which is the difference between a workflow and an agent.
 function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const s = run.summary || {};
   const {
@@ -268,44 +309,59 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
   const pending = run.status === "pending_approval";
   const legacy = s.approval_version !== 2;
 
-  // 1. Identify all possible step indices
-  const allIdx = (queued.steps || []).map((st, i) => st.index ?? i);
+  const steps = queued.steps || [];
+  const actionableSteps = steps.filter((st) => st.action !== "flag_for_human");
+  const flagSteps = steps.filter((st) => st.action === "flag_for_human");
+  const actionableIdx = actionableSteps.map((st, i) => st.index ?? i);
+  const flagIdx = flagSteps.map((st, i) => st.index ?? i);
 
   // 2. Logic to determine historical checkbox state based on run status and database outcome
   const getHistoricalSelection = () => {
-    // If it's a new or currently processing run, everything starts checked
     if (run.status === "pending_approval" || run.status === "committing") {
-      return allIdx;
+      return actionableIdx;
     }
-    // If it was fully rejected, nothing is checked
     if (run.status === "rejected") {
       return [];
     }
-
-    // If it finished (approved/completed/failed), check the backend's declined_steps
     if (run.outcome?.declined_steps) {
       const declinedSkus = run.outcome.declined_steps.map((d) => d.sku);
-      return (queued.steps || [])
+      return actionableSteps
         .map((st, i) => ({ idx: st.index ?? i, sku: st.sku }))
         .filter((st) => !declinedSkus.includes(st.sku))
         .map((st) => st.idx);
     }
-
-    // Fallback if there is no outcome saved yet
-    return allIdx;
+    return actionableIdx;
   };
 
   const [picked, setPicked] = useState(getHistoricalSelection());
+  // Flags need an explicit review, separate from "include in this order" --
+  // previously they were just another pre-checked row in `picked`, so
+  // clicking Approve required no attention to them at all. Unchecked by
+  // default; historical (already-decided) runs don't need this gate any
+  // more, so they render as already-reviewed.
+  const [reviewedFlags, setReviewedFlags] = useState(
+    pending ? new Set() : new Set(flagIdx),
+  );
 
-  // Re-run the historical selection logic if the run updates (e.g. going from pending -> approved)
   useEffect(() => {
     setPicked(getHistoricalSelection());
-  }, [run.thread_id, (queued.steps || []).length, run.status, run.outcome]);
+    setReviewedFlags(run.status === "pending_approval" ? new Set() : new Set(flagIdx));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.thread_id, steps.length, run.status, run.outcome]);
 
-  // Calculate the S$ total dynamically based on checked items
-  const selectedTotal = (queued.steps || [])
+  const selectedTotal = actionableSteps
     .filter((st, i) => picked.includes(st.index ?? i))
     .reduce((t, st) => t + (st.value_sgd || 0), 0);
+
+  const allFlagsReviewed = flagIdx.every((idx) => reviewedFlags.has(idx));
+  const canApprove =
+    pending && (picked.length > 0 || flagIdx.length > 0) && allFlagsReviewed;
+
+  const approve = () =>
+    onDecide(run.thread_id, "approved", [...picked, ...flagIdx].sort((a, b) => a - b));
+
+  const moqAdaptations = adaptations.filter((a) => a.error_code === "MOQ_NOT_MET");
+  const otherAdaptations = adaptations.filter((a) => a.error_code !== "MOQ_NOT_MET");
 
   return (
     <div className="modal-back" onClick={onClose}>
@@ -398,8 +454,8 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
             ? "Tick only the lines you want. Unticked lines are not ordered and do not close the beneficiary messages behind them."
             : "Unticked lines were rejected and not ordered."}
         </p>
-        {(queued.steps || []).length === 0 ? (
-          <p className="muted small">Nothing queued.</p>
+        {actionableSteps.length === 0 ? (
+          <p className="muted small">Nothing queued for purchase.</p>
         ) : (
           <table>
             <thead>
@@ -413,7 +469,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
               </tr>
             </thead>
             <tbody>
-              {queued.steps.map((st, i) => {
+              {actionableSteps.map((st, i) => {
                 const idx = st.index ?? i;
                 const on = picked.includes(idx);
                 return (
@@ -436,29 +492,7 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
                     <td>{st.action.replace(/_/g, " ")}</td>
                     <td className="mono small">{st.sku}</td>
                     <td className="num">{st.qty || "—"}</td>
-                    <td className="small">
-                      {st.action === "flag_for_human" ? (
-                        // A gap means nothing in the catalogue can serve this need.
-                        // Ticking it off changes nothing — the fix is to create the
-                        // SKU so the agent can order it next run.
-                        <button
-                          className="btn-sm btn-primary"
-                          type="button"
-                          onClick={() =>
-                            onCreateSku({
-                              __prefill: true,
-                              sku: st.sku,
-                              name: (st.rationale || st.sku).slice(0, 60),
-                              category: "UNCATEGORISED",
-                            })
-                          }
-                        >
-                          Create this SKU
-                        </button>
-                      ) : (
-                        st.vendor_id || "—"
-                      )}
-                    </td>
+                    <td className="small">{st.vendor_id || "—"}</td>
                     <td className="num">
                       {st.value_sgd ? `S$${st.value_sgd.toFixed(2)}` : "—"}
                     </td>
@@ -478,61 +512,142 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
           )}
         </p>
 
+        {flagSteps.length > 0 && (
+          <>
+            <h3>Flagged for your review</h3>
+            <p className="muted small" style={{ marginTop: -4 }}>
+              The agent could not act on these on its own. Read each one and
+              tick <strong>Reviewed</strong> before you can approve this run
+              — ticking does not place an order, it only clears the way to
+              approve the rest.
+            </p>
+            {flagSteps.map((st, i) => {
+              const idx = st.index ?? i;
+              const reviewed = reviewedFlags.has(idx);
+              return (
+                <div
+                  key={idx}
+                  className="card"
+                  style={{
+                    marginBottom: 8,
+                    borderColor: reviewed ? undefined : "#eddcb4",
+                    background: reviewed ? undefined : "var(--warn-soft)",
+                  }}
+                >
+                  <div className="row" style={{ alignItems: "flex-start" }}>
+                    <input
+                      type="checkbox"
+                      style={{ width: 18, marginTop: 3 }}
+                      checked={reviewed}
+                      disabled={!pending}
+                      onChange={() => {
+                        const next = new Set(reviewedFlags);
+                        reviewed ? next.delete(idx) : next.add(idx);
+                        setReviewedFlags(next);
+                      }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div className="mono small muted">{st.sku}</div>
+                      <div className="small">
+                        {st.rationale || "No stocked SKU covers this need."}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-sm btn-primary"
+                      type="button"
+                      onClick={() =>
+                        onCreateSku({
+                          __prefill: true,
+                          sku: st.sku,
+                          name: (st.rationale || st.sku).slice(0, 60),
+                          category: "UNCATEGORISED",
+                        })
+                      }
+                    >
+                      Create this SKU
+                    </button>
+                  </div>
+                  {!reviewed && pending && (
+                    <div className="small" style={{ marginTop: 6 }}>
+                      <Pill kind="warn">needs review</Pill>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
         <h3>Adaptations it had to make</h3>
         {adaptations.length === 0 ? (
           <p className="muted small">
             None — validation succeeded on the first try.
           </p>
         ) : (
-          adaptations.map((a, i) => (
-            <div
-              key={i}
-              className="card"
-              style={{
-                background: "var(--accent-soft)",
-                borderColor: "#bcd9c9",
-                marginBottom: 8,
-              }}
-            >
-              <div className="small" style={{ fontWeight: 600 }}>
-                Attempt {a.attempt} after {a.error_code}
-              </div>
-              <div className="small">{a.what_changed}</div>
-              {a.confidence != null && (
-                <div className="muted small">
-                  confidence {Math.round(a.confidence * 100)}%
+          <>
+            {moqAdaptations.length > 0 && (
+              <details className="card" style={{ marginBottom: 8, padding: "10px 14px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+                  {moqAdaptations.length} vendor minimum-order retr
+                  {moqAdaptations.length > 1 ? "ies" : "y"} (MOQ_NOT_MET)
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                  {moqAdaptations.map((a, i) => (
+                    <div
+                      key={i}
+                      className="small"
+                      style={{ marginBottom: i < moqAdaptations.length - 1 ? 8 : 0 }}
+                    >
+                      <div style={{ fontWeight: 600 }}>
+                        {a.sku ? `${a.sku} — ` : ""}attempt {a.attempt}
+                      </div>
+                      <div>{a.what_changed}</div>
+                    </div>
+                  ))}
                 </div>
-              )}
-            </div>
-          ))
+              </details>
+            )}
+            {otherAdaptations.map((a, i) => (
+              <div
+                key={i}
+                className="card"
+                style={{
+                  background: "var(--accent-soft)",
+                  borderColor: "#bcd9c9",
+                  marginBottom: 8,
+                }}
+              >
+                <div className="small" style={{ fontWeight: 600 }}>
+                  {a.sku ? `${a.sku} — ` : ""}attempt {a.attempt} after {a.error_code}
+                </div>
+                <div className="small">{a.what_changed}</div>
+                {a.confidence != null && (
+                  <div className="muted small">
+                    confidence {Math.round(a.confidence * 100)}%
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
         )}
 
         <h3>Node trace</h3>
-        {["sense", "predict", "act", "adapt", "approval", "commit"].map(
-          (node) => (
-            <details key={node} style={{ marginBottom: 8 }}>
-              <summary>{node}</summary>
-              <pre
-                className="small"
-                style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-              >
-                {JSON.stringify(
-                  (s.trace || s.attempts || []).filter((t) => t.node === node),
-                  null,
-                  2,
-                )}
-              </pre>
-            </details>
-          ),
-        )}
-        {run.outcome && (
-          <details>
-            <summary>Outcome</summary>
-            <pre className="small" style={{ whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(run.outcome, null, 2)}
+        {["seed", "agent", "tools", "finalize"].map((node) => (
+          <details key={node} style={{ marginBottom: 8 }}>
+            <summary>{node}</summary>
+            <pre
+              className="small"
+              style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+            >
+              {JSON.stringify(
+                (s.trace || s.attempts || []).filter((t) => t.node === node),
+                null,
+                2,
+              )}
             </pre>
           </details>
-        )}
+        ))}
+        {run.outcome && <OutcomePanel outcome={run.outcome} />}
         {run.status === "committing" && (
           <button
             disabled={busy}
@@ -555,12 +670,15 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
             </button>
             <button
               className="btn-primary"
-              disabled={busy || picked.length === 0}
-              onClick={() => onDecide(run.thread_id, "approved", picked)}
+              disabled={busy || !canApprove}
+              onClick={approve}
+              title={!allFlagsReviewed ? "Review every flagged item first" : undefined}
             >
               {busy
                 ? "Committing…"
-                : `Approve ${picked.length} of ${allIdx.length} — S$${selectedTotal.toFixed(2)}`}
+                : !allFlagsReviewed
+                  ? `Review ${flagIdx.length - reviewedFlags.size} flagged item(s) to continue`
+                  : `Approve ${picked.length + flagIdx.length} of ${actionableIdx.length + flagIdx.length} — S$${selectedTotal.toFixed(2)}`}
             </button>
           </div>
         ) : (
@@ -574,5 +692,75 @@ function RunDetail({ run, busy, onClose, onDecide, onCreateSku }) {
         )}
       </div>
     </div>
+  );
+}
+
+// A donation-fed charity (`kind: "acquisition_checklist"`) placed no order —
+// this must read as a checklist for staff to work from, not a purchase
+// summary with vendors and dollar figures that were never spent.
+function OutcomePanel({ outcome }) {
+  if (outcome.kind === "acquisition_checklist") {
+    return (
+      <>
+        <h3>Acquisition checklist</h3>
+        <p className="muted small" style={{ marginTop: -4 }}>
+          No purchase was made — this charity is donation-fed. Ranked by
+          urgency × days of cover short, for staff to action.
+        </p>
+        {(outcome.items || []).length === 0 ? (
+          <p className="muted small">Nothing to acquire this run.</p>
+        ) : (
+          (outcome.items || []).map((item, i) => (
+            <div key={i} className="row" style={{ alignItems: "flex-start", marginBottom: 8 }}>
+              <input type="checkbox" style={{ width: 18, marginTop: 3 }} aria-label={`Mark ${item.sku} acquired`} />
+              <div style={{ flex: 1 }}>
+                <div className="small">
+                  <span className="mono">{item.sku}</span>{" "}
+                  <Pill kind="mute">qty {item.qty}</Pill>{" "}
+                  <Pill kind="mute">urgency {item.urgency}</Pill>
+                </div>
+                {item.why && <div className="muted small">{item.why}</div>}
+              </div>
+            </div>
+          ))
+        )}
+        {(outcome.review_flags || []).length > 0 && (
+          <p className="muted small">
+            {outcome.review_flags.length} item(s) also flagged for human review — see above.
+          </p>
+        )}
+      </>
+    );
+  }
+
+  if (outcome.kind === "commit_failed") {
+    return (
+      <>
+        <h3>Commit result</h3>
+        <Banner kind="err">
+          {(outcome.failed_steps || []).length} order(s) could not be committed. Nothing was charged for these lines.
+        </Banner>
+        {(outcome.failed_steps || []).map((f, i) => (
+          <div key={i} className="small" style={{ marginBottom: 4 }}>
+            <span className="mono">{f.step?.sku}</span> — {f.error}
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <h3>Purchase order</h3>
+      <p className="small">
+        <strong>S${(outcome.total_sgd ?? 0).toFixed(2)}</strong> committed across{" "}
+        {(outcome.orders || []).length} order(s).
+      </p>
+      {(outcome.declined_steps || []).length > 0 && (
+        <p className="muted small">
+          {outcome.declined_steps.length} line(s) declined and not ordered.
+        </p>
+      )}
+    </>
   );
 }
