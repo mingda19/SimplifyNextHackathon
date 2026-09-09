@@ -1,58 +1,87 @@
 """
 The only module that talks to Bedrock.
 
-Two functions, one per reasoning node. Both short-circuit to fixtures when
-FAKE_LLM=1, which is how ~80% of development runs cost nothing (plan.md §7.1).
+One function, `agent_step()`, called once per turn of the tool-calling loop
+in `nodes/agent.py`. There is no FAKE_LLM short-circuit here -- every call is
+real Bedrock, gated only by `ledger.check_budget()` (unconditional, before
+every single call) and `settings.max_agent_turns` (enforced by the caller).
 """
 from __future__ import annotations
 
-import json
 import logging
 from functools import lru_cache
 from typing import Any
 
-from pydantic import ValidationError
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from . import fixtures, ledger
-from .config import BASELINES, settings
-from .state import Adaptation, Plan
+from . import ledger
+from .config import settings
 
 log = logging.getLogger(__name__)
 
-# Stable prefix. Anything volatile (timestamps, per-run ids) must go in the
-# user turn instead, or it silently invalidates the cache.
-PREDICT_SYSTEM = """You are the planning node of an autonomous supply-chain agent \
-operating for a charity that distributes food to beneficiaries.
+# Stable prefix, cached via `cache_control` below. Anything volatile
+# (timestamps, per-run ids, the actual state of the world) belongs in the
+# first HumanMessage instead (built by `seed.py`), or it silently
+# invalidates the cache on every run.
+#
+# Merges the old PREDICT_SYSTEM (single upfront Plan) and ADAPT_SYSTEM
+# (single-purpose retry) into one prompt for the tool-calling loop. The
+# ADAPT_SYSTEM rules are carried forward on purpose, not dropped: the
+# MOQ_NOT_MET -> read alternatives -> raise qty -> reprice -> switch vendor
+# beat is this project's scripted demo centerpiece, and a general-purpose
+# autonomous loop needs the same explicit guidance a narrow single-call
+# adapt() used to get, or it is not guaranteed to reproduce that reasoning
+# zero-shot.
+AGENT_SYSTEM = """You are the planning agent of an autonomous supply-chain \
+agent operating for a charity that distributes food to beneficiaries.
 
-You receive a State of the World describing current stock, alerts, aggregated \
-beneficiary feedback, and a commodity price forecast. Compare it against the \
-operating baselines, identify what will fail and when, and emit a plan that \
-prevents it.
+You will be given a State of the World: current stock, alerts, and what is \
+already on the way. You have four tools:
+
+- `feedback_extraction` -- the current ranked list of unmet beneficiary needs.
+  Call this once, early, if the State of the World doesn't already answer what
+  beneficiaries are short of.
+- `price_forecaster` -- a BUY_NOW / DEFER / NEUTRAL signal for one commodity
+  (its `dspi_series`). Call it for SKUs you're actually considering acting on,
+  not every SKU in inventory.
+- `sku_matching` -- deterministic (never guessed) check for whether a term
+  maps to a real, stocked SKU. Use it when an unmet need has no obvious SKU,
+  or `mentioned_skus` is empty. A `fuzzy` result is a lead, not a fact.
+- `action_generator` -- stage ONE action (`request_quote`, `place_order`,
+  `reallocate_lot`, or `flag_for_human`) against a SKU. Never commits; a human
+  approves everything you stage before anything real happens.
+
+Work in this order: diagnose first, then act.
+
+1. Identify what will fail and when. Call `submit_diagnosis` ONCE, early, with
+   the SKU that fails first, the days until it does, and your reasoning --
+   this is shown to the human approver, write it for them, not for a log.
+2. Then call `action_generator` for each action you want to take.
 
 Rules:
-- Only use the four permitted actions. Never invent an action.
-- CRITICAL: `request_quote`, `place_order` and `reallocate_lot` are executable and each MUST carry an integer `qty` of 1 or more. A qty of 0 is valid only on `flag_for_human`.
-- If you are unsure of a quantity, need to request a quote, or a need maps to no existing SKU, use the `flag_for_human` action instead.
+- Only the four actions `action_generator` accepts exist. Never invent one.
+- CRITICAL: `request_quote`, `place_order` and `reallocate_lot` each MUST
+  carry an integer `qty` of 1 or more. A qty of 0 is valid only on
+  `flag_for_human`. If you are not confident of a quantity, or a need maps to
+  no existing SKU, use `flag_for_human` instead of guessing.
 - Prefer the vendor whose lead time beats the projected stockout date.
-- If the price forecast says BUY_NOW, do not defer an order to a later cycle.
-- `already_on_the_way` lists stock ALREADY ordered and not yet delivered. Do
-  NOT propose another order for a SKU that has enough inbound to clear its
-  shortfall — say so in `reasoning` instead. Re-ordering what is already coming
-  is the most expensive mistake you can make here.
-- If an input service was unavailable, reason without it and say so in `reasoning`.
-- `reasoning` is shown to a human approver. Write it for them, not for a log."""
-
-ADAPT_SYSTEM = """You are the adaptation node of an autonomous supply-chain agent.
-
-A planned step failed against the backend. You receive the step, the error, and \
-the alternatives the backend offered. Produce a revised step that resolves the \
-failure.
-
-Rules:
-- Prefer an option from `alternatives` over one you invent.
-- Change the minimum necessary to clear the error.
-- If the alternatives make a different vendor cheaper or faster, switching is correct.
-- `what_changed` is shown verbatim to a human approver. One sentence, plain English."""
+- If a price forecast says BUY_NOW, do not defer that order to a later cycle.
+- The State of the World's `already_on_the_way` lists stock ALREADY ordered
+  and not yet delivered. Do NOT propose another order for a SKU that has
+  enough inbound to clear its shortfall -- say so in your diagnosis instead.
+  Re-ordering what is already coming is the most expensive mistake you can
+  make here.
+- If `action_generator` returns an error (e.g. `MOQ_NOT_MET`), that error
+  includes an `alternatives` array -- prefer an option from it over inventing
+  one. Change the minimum necessary to clear the error. Only switch vendor if
+  the alternatives make a different one genuinely cheaper or faster. Explain
+  what changed and why in the `rationale` argument of your retry -- it is
+  shown to the human approver alongside the original attempt.
+- If an input was unavailable (a tool returned an error), reason without it
+  and say so in your diagnosis.
+- You have a limited number of turns. Stop calling tools once you have
+  diagnosed the situation and staged everything you intend to -- that is what
+  hands the run to a human for approval."""
 
 
 @lru_cache(maxsize=1)
@@ -74,162 +103,93 @@ def _client():
     )
 
 
-# Appended to the user turn when a response fails schema validation. Naming the
-# real action verbs matters: the model was emitting qty=0 on executable steps,
-# and the system prompt's generic phrasing ("like `order`") named no verb it
-# could actually match against.
-_REPAIR_TEMPLATE = """
+def _to_tool_param(tool: Any) -> dict[str, Any]:
+    """LangChain tool -> Anthropic `tools=[...]` entry.
 
-Your previous response was REJECTED by schema validation:
-{errors}
-
-Re-emit the entire object, corrected. Reminders:
-- `request_quote`, `place_order` and `reallocate_lot` are executable and each
-  requires an integer `qty` of 1 or more.
-- If you cannot justify a concrete quantity, emit `flag_for_human` (qty 0 is
-  valid there, and only there) rather than an executable step with qty 0.
-- `place_order` and `request_quote` require `vendor_id`; `reallocate_lot`
-  requires `lot_id`."""
-
-
-def _errors(exc: ValidationError) -> str:
-    """Pydantic errors as a short bulleted list the model can act on."""
-    return "\n".join(
-        f"- {'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg']}"
-        for e in exc.errors()[:5]
-    )
-
-
-def _call(model: str, max_tokens: int, system: str, user: str, schema: type):
-    """One structured Bedrock request, budget-checked and ledgered.
-
-    Retries once on a schema violation. Haiku intermittently breaks a PlanStep
-    invariant -- qty=0 on an executable action is the one seen in practice --
-    and previously that halted the whole run, throwing away the SENSE and
-    price-forecast work already paid for and showing the operator a dead end
-    ("AI generated an invalid plan ... Please retry") they could only resolve
-    by starting over. Handing the validation error back costs one extra Haiku
-    call and lets the model correct itself.
-
-    The failed attempt's tokens are spent but not ledgered: the SDK raises
-    during parsing, so there is no usage object to record. check_budget still
-    runs before each attempt, so this cannot outrun the budget.
+    `tool.tool_call_schema` (not `tool.args_schema`) is the one that already
+    excludes `InjectedState`/`InjectedToolCallId` params -- confirmed by
+    direct inspection: `args_schema` for `price_forecaster` includes
+    `state`/`tool_call_id`, `tool_call_schema` does not. The model must never
+    see those; `ToolNode` fills them in at execution time.
     """
-    content = user
-    for attempt in (1, 2):
-        ledger.check_budget()      # refuses rather than overspending
-        try:
-            resp = _client().messages.parse(
-                model=model,
-                max_tokens=max_tokens,
-                # Cached on the system prompt, which is identical across the
-                # repair call -- only the user turn grows, so the cache holds.
-                system=[{"type": "text", "text": system,
-                         "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": content}],
-                output_format=schema,
-            )
-        except ValidationError as exc:
-            if attempt == 2:
-                log.error("bedrock %s: schema violation survived repair: %s",
-                          model, exc)
-                raise
-            errors = _errors(exc)
-            log.warning("bedrock %s: schema violation, repairing:\n%s",
-                        model, errors)
-            content = user + _REPAIR_TEMPLATE.format(errors=errors)
-            continue
-
-        led = ledger.record(model, resp.usage)
-        log.info("bedrock %s -> %s (attempt %d)", model, ledger.summary(), attempt)
-        return resp.parsed_output, led
+    schema = tool.tool_call_schema.model_json_schema()
+    schema.pop("title", None)
+    for prop in schema.get("properties", {}).values():
+        prop.pop("title", None)
+    return {"name": tool.name, "description": tool.description, "input_schema": schema}
 
 
-def _compact(sow: dict[str, Any]) -> dict[str, Any]:
-    """Trim SENSE's output to what PREDICT can actually act on.
+def _to_anthropic_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    """LangChain message list -> Anthropic `messages=[...]`.
 
-    The raw State of the World is ~11.7k tokens, and most of it is inert: 44
-    ranked needs each carrying `examples` and `near_misses`, plus every one of
-    40 SKUs including the 24 that are comfortably stocked. Sending all of it
-    costs tokens on every run and buries the handful of rows that matter.
-
-    Nothing is invented here — this only drops fields and rows PREDICT has no
-    use for, and it says how many it dropped so the model knows the list is
-    truncated rather than complete.
+    Tool-call round-tripping is reconstructed purely from `AIMessage.tool_calls`
+    (`{"name","args","id"}` maps 1:1 onto a `tool_use` block's
+    `name`/`input`/`id`) -- nothing extra needs to be stashed on the message
+    when it's first built in `_to_ai_message` below.
     """
-    out: dict[str, Any] = {"as_of": sow.get("as_of")}
-
-    items = sow.get("inventory") or []
-    keep, skipped = [], 0
-    for i in items:
-        draw = i.get("avg_daily_draw") or 0
-        cover = (i.get("on_hand", 0) / draw) if draw else None
-        if i.get("on_hand", 0) < i.get("reorder_point", 0) or (
-                cover is not None and cover < 21):
-            keep.append({k: i.get(k) for k in
-                         ("sku", "name", "on_hand", "unit", "reorder_point",
-                          "avg_daily_draw", "unit_cost_sgd",
-                          "preferred_vendor_id", "dspi_series")}
-                        | {"days_cover": round(cover, 1) if cover else None})
-        else:
-            skipped += 1
-    out["inventory_at_risk"] = keep
-    out["inventory_healthy_count"] = skipped
-
-    out["alerts"] = sow.get("alerts")
-
-    # What is already ordered. PREDICT must subtract this before proposing a
-    # restock, or it re-orders the same SKU every run for the whole lead time.
-    out["already_on_the_way"] = sow.get("inbound_orders") or {}
-
-    needs = (sow.get("unmet_needs") or {}).get("ranked") or []
-    out["top_unmet_needs"] = [
-        {k: n.get(k) for k in ("need", "frequency", "urgency", "score",
-                               "mentioned_skus", "gap", "suggested_category")}
-        for n in needs[:12]
-    ]
-    out["unmet_needs_total"] = len(needs)
-
-    pf = sow.get("price_forecast") or {}
-    out["price_forecasts"] = {
-        name: {k: f.get(k) for k in
-               ("series", "recommendation", "confidence", "direction",
-                "pct_change_3m", "data_lag_months", "rationale")}
-        for name, f in (pf.get("forecasts") or {}).items()
-    }
-    out["price_no_forecast_for"] = pf.get("no_forecast_for") or []
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            out.append({"role": "user", "content": m.content})
+        elif isinstance(m, AIMessage):
+            blocks: list[dict[str, Any]] = []
+            if m.content:
+                text = m.content if isinstance(m.content, str) else str(m.content)
+                blocks.append({"type": "text", "text": text})
+            for tc in (m.tool_calls or []):
+                blocks.append({"type": "tool_use", "id": tc["id"],
+                               "name": tc["name"], "input": tc["args"]})
+            out.append({"role": "assistant", "content": blocks})
+        elif isinstance(m, ToolMessage):
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            out.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": m.tool_call_id,
+                 "content": content},
+            ]})
+        # SystemMessage is intentionally skipped here -- the system prompt is
+        # passed separately via `system=`, not as a message in the list.
     return out
 
 
-def predict_plan(state_of_world: dict[str, Any],
-                 degraded: list[str],
-                 charity_type: str) -> tuple[Plan, dict[str, Any] | None]:
-    """PHASE 2. Returns (plan, ledger_snapshot | None)."""
-    if settings.fake_llm:
-        log.info("FAKE_LLM=1 — returning canned plan (no Bedrock call)")
-        return Plan.model_validate(fixtures.FAKE_PLAN), None
+def _to_ai_message(resp: Any) -> AIMessage:
+    """Anthropic response -> `AIMessage` with `.tool_calls` populated.
 
-    payload = {
-        "charity_type": charity_type,
-        "baselines": BASELINES,
-        "state_of_world": _compact(state_of_world),
-        "unavailable_services": degraded,
-    }
-    # sort_keys is not cosmetic — unsorted JSON is a silent cache invalidator.
-    user = json.dumps(payload, sort_keys=True, indent=2, default=str)
-    return _call(settings.model_predict, settings.max_tokens_predict,
-                 PREDICT_SYSTEM, user, Plan)
+    `ToolNode`/`tools_condition` read `.tool_calls`, not raw `content` -- this
+    field is load-bearing, confirmed against the standalone mechanics test
+    in Phase 0.
+    """
+    text_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    for block in resp.content:
+        if block.type == "text":
+            text_parts.append(block.text)
+        elif block.type == "tool_use":
+            tool_calls.append({"name": block.name, "args": block.input,
+                               "id": block.id, "type": "tool_call"})
+    return AIMessage(content="\n".join(text_parts), tool_calls=tool_calls)
 
 
-def adapt_step(step: dict[str, Any],
-               error: dict[str, Any],
-               attempt_no: int) -> tuple[Adaptation, dict[str, Any] | None]:
-    """PHASE 3 adaptation. Returns (adaptation, ledger_snapshot | None)."""
-    if settings.fake_llm:
-        log.info("FAKE_LLM=1 — returning canned adaptation (no Bedrock call)")
-        return Adaptation.model_validate(fixtures.fake_adaptation(step, error)), None
+def agent_step(messages: list[BaseMessage],
+              tools: list[Any]) -> tuple[AIMessage, dict[str, Any] | None]:
+    """One turn of the agent loop: budget-checked, ledgered, real Bedrock.
 
-    payload = {"failed_step": step, "error": error, "attempt_number": attempt_no}
-    user = json.dumps(payload, sort_keys=True, indent=2, default=str)
-    return _call(settings.model_adapt, settings.max_tokens_adapt,
-                 ADAPT_SYSTEM, user, Adaptation)
+    Called once per turn from `nodes/agent.py`, which enforces
+    `settings.max_agent_turns` around the loop this feeds -- `check_budget()`
+    here only guards the per-call spend cap, not the turn count.
+    """
+    ledger.check_budget()          # refuses rather than overspending
+    resp = _client().messages.create(
+        model=settings.model_predict,
+        max_tokens=settings.max_tokens_predict,
+        system=[{"type": "text", "text": AGENT_SYSTEM,
+                 "cache_control": {"type": "ephemeral"}}],
+        messages=_to_anthropic_messages(messages),
+        tools=[_to_tool_param(t) for t in tools],
+        tool_choice={"type": "auto"},
+    )
+    led = ledger.record(settings.model_predict, resp.usage)
+    ai_msg = _to_ai_message(resp)
+    log.info("bedrock %s -> %s (stop_reason=%s, %d tool call(s))",
+             settings.model_predict, ledger.summary(), resp.stop_reason,
+             len(ai_msg.tool_calls))
+    return ai_msg, led

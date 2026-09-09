@@ -30,9 +30,10 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.types import Command
 
+from orchestrator import watch
 from orchestrator.config import settings
 from orchestrator.graph import compile_graph
-from orchestrator.nodes.approval import build_summary
+from orchestrator.nodes.finalize import build_summary
 from orchestrator.state import APPROVAL_VERSION, new_state
 
 logging.basicConfig(level=logging.INFO)
@@ -141,8 +142,9 @@ def _run_graph(thread_id: str, charity_type: str) -> None:
 def health():
     try:
         n = _sql("SELECT count(*) AS n FROM agent.runs", fetch="one")["n"]
-        return {"status": "ok", "runs": n, "fake_llm": settings.fake_llm,
-                "model": settings.model_predict}
+        return {"status": "ok", "runs": n,
+                "model": settings.model_predict,
+                "session_spend_cap_usd": settings.max_session_spend_usd}
     except Exception as exc:  # noqa: BLE001
         return {"status": "degraded", "detail": str(exc)}
 
@@ -155,17 +157,52 @@ class DecisionRequest(BaseModel):
     decision: Literal["approved", "rejected"]
 
 
-@app.post("/agent/runs", status_code=202)
-def start_run(payload: RunRequest = Body(default=RunRequest()), user: dict = Depends(require_charity)):
-    charity_type = payload.charity_type
-    if charity_type not in ("A", "B"):
-        raise HTTPException(400, "charity_type must be 'A' or 'B'")
+class WatchRequest(BaseModel):
+    active: bool
+    charity_type: Literal["A", "B"] = "B"
+
+
+def _create_run(charity_type: str) -> str:
+    """Insert the row and kick off the background graph run. Shared by the
+    manual `POST /agent/runs` handler and `watch.py`'s poller, so an
+    event-triggered run and a button-triggered run are indistinguishable
+    once started."""
     thread_id = f"run-{uuid.uuid4().hex[:10]}"
     _sql("""INSERT INTO agent.runs (thread_id, charity_type, status)
             VALUES (%s,%s,'running')""", (thread_id, charity_type))
     threading.Thread(target=_run_graph, args=(thread_id, charity_type),
                      daemon=True).start()
+    return thread_id
+
+
+def _has_run_in_flight() -> bool:
+    row = _sql("""SELECT 1 FROM agent.runs
+                  WHERE status IN ('running','pending_approval','committing')
+                  LIMIT 1""", fetch="one")
+    return row is not None
+
+
+@app.post("/agent/runs", status_code=202)
+def start_run(payload: RunRequest = Body(default=RunRequest()), user: dict = Depends(require_charity)):
+    charity_type = payload.charity_type
+    if charity_type not in ("A", "B"):
+        raise HTTPException(400, "charity_type must be 'A' or 'B'")
+    thread_id = _create_run(charity_type)
     return {"thread_id": thread_id, "status": "running"}
+
+
+@app.get("/agent/watch")
+def get_watch(user: dict = Depends(require_charity)):
+    """Current event-driven watch state -- see `watch.py` for the two
+    trigger conditions and the auto-shutdown rule."""
+    return watch.snapshot()
+
+
+@app.post("/agent/watch")
+def set_watch(payload: WatchRequest, user: dict = Depends(require_charity)):
+    if payload.active:
+        return watch.activate(payload.charity_type, _create_run, _has_run_in_flight)
+    return watch.deactivate()
 
 
 @app.get("/agent/runs")

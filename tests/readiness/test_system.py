@@ -123,9 +123,10 @@ def test_feedback_is_stored_and_canned_extraction_is_aggregated(api):
     beneficiary = "QA-" + uuid.uuid4().hex
     response = api("feedback", "POST", "/feedback", json={"beneficiary_id": beneficiary,
                    "text": "We ran out of rice again", "lang": "en", "channel": "web"})
-    # 201, not 202: extraction now runs inline, so the row is already complete
-    # when POST returns. The poll below is kept only for FEEDBACK_ASYNC_EXTRACTION=1.
-    assert response.status_code == 201
+    # 202: extraction is queued in the background by default (latency on the
+    # intake screen matters more than same-request freshness -- the agent's
+    # feedback_extraction tool sweeps up pending rows itself, see main.py).
+    assert response.status_code == 202
     feedback_id = response.json()["id"]
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:

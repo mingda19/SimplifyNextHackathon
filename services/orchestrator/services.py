@@ -78,6 +78,14 @@ def get_unmet_needs() -> dict[str, Any]:
     return _get(settings.feedback_url, "/feedback/unmet-needs")
 
 
+def count_feedback() -> int:
+    """Total feedback row count -- used by watch mode to detect "10+ new
+    messages poured in" without pulling the whole table every poll."""
+    if settings.fake_feedback:
+        return len((fixtures.UNMET_NEEDS.get("ranked") or []))
+    return _get(settings.feedback_url, "/feedback/count")["count"]
+
+
 def get_inbound_orders() -> dict[str, Any]:
     """Open purchase orders per SKU — what is already on the way.
 
@@ -103,6 +111,28 @@ def resolve_feedback(skus: list[str], run_id: str, note: str = "") -> dict[str, 
     except httpx.HTTPError as exc:
         log.warning("could not resolve feedback: %s", exc)
         return {"resolved": 0, "error": str(exc)}
+
+
+def extract_pending_feedback(limit: int = 50) -> dict[str, Any]:
+    """Sweep up feedback rows still `pending`/`failed` before reading needs.
+
+    `POST /feedback` queues extraction in the background by default now (fast
+    response for the beneficiary) rather than blocking on it, so a message
+    posted moments ago may not be extracted yet by the time the agent looks.
+    Calling this first is what makes `feedback_extraction`'s read fresh
+    without making the beneficiary wait on Bedrock at submission time.
+    """
+    if settings.fake_feedback:
+        return {"attempted": 0, "done": 0, "failed": 0}
+    url = f"{settings.feedback_url.rstrip('/')}/feedback/extract-pending"
+    try:
+        with httpx.Client(timeout=settings.http_timeout * 4) as c:
+            r = c.post(url, params={"limit": limit})
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as exc:
+        log.warning("could not sweep pending feedback: %s", exc)
+        return {"attempted": 0, "done": 0, "failed": 0, "error": str(exc)}
 
 
 def get_price_forecasts(series_names: list[str]) -> dict[str, Any]:
@@ -226,6 +256,48 @@ def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     if not r.is_success:
         raise ServiceError(f"quote {vendor_id} returned {r.status_code}")
     return {"status": "QUOTED", **body}
+
+
+def allocate_lot(sku: str, lot_id: str, qty: int, *, validate_only: bool = True) -> dict[str, Any]:
+    """Allocate from a specific lot WITHOUT committing it, by default.
+
+    Was previously called from `act.py` but never implemented in this module
+    -- any `reallocate_lot` PlanStep that reached execution would have raised
+    a bare `AttributeError` (uncaught anywhere, unlike `VendorError`/
+    `ServiceError`) and crashed the graph outright. Workstream 1's inventory
+    service does have the endpoint this always should have called:
+    `POST /{sku}/allocate/validate` for a non-committing check (mirrors
+    `vendor_quote` vs `vendor_order` exactly), `POST /{sku}/allocate` to
+    actually commit. `action_generator` must only ever call this with
+    `validate_only=True` -- committing a real allocation, like a real order,
+    happens in `finalize` after human approval, never mid-loop.
+    """
+    if settings.fake_inventory:
+        # No lot fixtures exist (fixtures.py has no per-lot data) -- a plain
+        # deterministic ack is enough for graph-mechanics testing, matching
+        # AllocationResponse's real shape.
+        return {"sku": sku, "lot_id": lot_id, "qty": qty}
+
+    suffix = "/allocate/validate" if validate_only else "/allocate"
+    url = f"{settings.inventory_url.rstrip('/')}/inventory/{sku}{suffix}"
+    try:
+        with httpx.Client(timeout=settings.http_timeout) as c:
+            r = c.post(url, json={"lot_id": lot_id, "qty": qty})
+    except httpx.HTTPError as exc:
+        raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
+
+    body: dict[str, Any] = {}
+    try:
+        body = r.json()
+    except ValueError:
+        pass
+    if body.get("code") or (400 <= r.status_code < 500):
+        raise VendorError(r.status_code, body.get("code", "UNKNOWN"),
+                          body.get("message", r.text),
+                          body.get("alternatives", []), body.get("remedy_hint", ""))
+    if not r.is_success:
+        raise ServiceError(f"allocate {sku}/{lot_id} returned {r.status_code}")
+    return body
 
 
 def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:

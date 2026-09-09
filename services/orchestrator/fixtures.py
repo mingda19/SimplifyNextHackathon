@@ -1,12 +1,16 @@
 """
-Canned data for FAKE_LLM / FAKE_SERVICES mode.
+Canned data for FAKE_SERVICES mode (workstreams 1/2/3 -- inventory, feedback,
+price -- while those are being built or unavailable).
 
-These reproduce the scripted demo scenario in ../README.md exactly, so the whole
-graph runs end to end for $0 while services 1/2/3 are still being built.
+There is no FAKE_LLM canned response here any more: the agent node always
+calls real Bedrock (see `config.py`, `llm.py`). This module only stands in
+for the HTTP backends, gated by `FAKE_SERVICES`/`FAKE_INVENTORY`/etc.
 
-The load-bearing beat: the agent orders 200kg from the cheaper vendor, gets
-400 MOQ_NOT_MET, reads `alternatives`, raises to the 250 MOQ, re-prices, and
-discovers the second vendor is now cheaper — so it switches.
+The MOQ_NOT_MET -> read alternatives -> raise qty -> reprice -> switch
+vendor beat these fixtures were built to demonstrate is still exercisable
+live: VENDOR-HARVEST's `moq_units=250` vs VENDOR-COMMUNITY's
+`volume_break_qty=250` below is what makes a real agent run discover the
+switch is worth it, not a canned script.
 """
 from __future__ import annotations
 
@@ -86,91 +90,5 @@ PRICE_FORECAST: dict[str, Any] = {
     "confidence": 0.71,
     "rationale": "Rising 4 consecutive months (+2.15%); no seasonal trough before Jan.",
 }
-
-# --------------------------------------------------------------------------
-# Canned LLM outputs
-# --------------------------------------------------------------------------
-FAKE_PLAN: dict[str, Any] = {
-    "stockout_sku": "RICE-5KG",
-    "days_until_failure": 8,
-    "reasoning": (
-        "RICE-5KG has 8 days of cover against a 10-day baseline, and three "
-        "beneficiaries reported running out. Preferred vendor lead time is 5 days, "
-        "so an order must be placed now. Rice prices are rising (+2.15% over 3 "
-        "months) with no seasonal trough before January, so deferring costs more. "
-        "A request for softer food maps to no existing SKU and needs a human."
-    ),
-    "steps": [
-        {"action": "place_order", "sku": "RICE-5KG", "qty": 200,
-         "vendor_id": "VENDOR-HARVEST",
-         "rationale": "Cover 40 days at 5 bags/day from the cheaper preferred vendor."},
-        {"action": "flag_for_human", "sku": "SOFT-FOOD-GAP", "qty": 0,
-         "vendor_id": None,
-         "rationale": "Repeated request for softer food matches no stocked SKU."},
-    ],
-}
-
-
-def fake_adaptation(step: dict[str, Any], error: dict[str, Any]) -> dict[str, Any]:
-    """
-    Canned adaptation, keyed on the error code so each branch is exercisable
-    without spending anything.
-    """
-    code = error.get("code", "")
-    revised = dict(step)
-    alts = error.get("alternatives") or []
-
-    if code == "MOQ_NOT_MET":
-        min_qty = next((a.get("minimum_qty") or a.get("min_qty") for a in alts if a.get("minimum_qty") or a.get("min_qty")), 250)
-        current_price = next((a["unit_price_sgd"] for a in alts
-                              if a.get("vendor_id") == step.get("vendor_id") and "unit_price_sgd" in a),
-                             VENDORS.get(step.get("vendor_id"), {}).get("base_price_sgd", float("inf")))
-        cheaper = min((a for a in alts if a.get("vendor_id") != step.get("vendor_id")
-                       and a.get("vendor_id") and a.get("available_qty", min_qty) >= min_qty
-                       and a.get("unit_price_sgd", float("inf")) < current_price),
-                      key=lambda a: a["unit_price_sgd"], default=None)
-        revised["qty"] = min_qty
-        what = f"Raised quantity from {step.get('qty')} to the {min_qty} minimum"
-        if cheaper:
-            revised["vendor_id"] = cheaper["vendor_id"]
-            what += (f", and switched to {cheaper['vendor_id']} — at {min_qty} units its "
-                     f"volume price (S${cheaper['unit_price_sgd']:.2f}) undercuts "
-                     f"{step.get('vendor_id')}")
-        return {"revised_step": revised, "what_changed": what, "confidence": 0.86}
-
-    if code == "OUT_OF_STOCK":
-        alt = next((a for a in alts if a.get("vendor_id")), None)
-        if alt:
-            revised["vendor_id"] = alt["vendor_id"]
-        return {"revised_step": revised,
-                "what_changed": f"Preferred vendor is out of stock; fell back to "
-                                f"{revised.get('vendor_id')}.",
-                "confidence": 0.78}
-
-    if code == "LEAD_TIME_EXCEEDED":
-        alt = next((a for a in alts if a.get("lead_time_days")), None)
-        if alt:
-            revised["vendor_id"] = alt["vendor_id"]
-        return {"revised_step": revised,
-                "what_changed": "Lead time landed after the stockout date; switched to "
-                                "a faster vendor.",
-                "confidence": 0.72}
-
-    if code == "LOT_EXPIRED":
-        live = next((a for a in alts if a.get("lot_id")), None)
-        if live:
-            revised["action"] = "reallocate_lot"
-            revised["lot_id"] = live["lot_id"]
-            revised["qty"] = min(revised["qty"], live.get("available_qty", revised["qty"]))
-        else:
-            revised["action"] = "flag_for_human"
-        return {"revised_step": revised,
-                "what_changed": "Target lot has expired; reallocating from a live lot.",
-                "confidence": 0.80}
-
-    return {"revised_step": revised,
-            "what_changed": f"Unrecognised error {code!r}; retrying unchanged.",
-            "confidence": 0.30}
-
 
 PRICE_FORECAST_ENVELOPE["forecasts"]["Rice"] = PRICE_FORECAST

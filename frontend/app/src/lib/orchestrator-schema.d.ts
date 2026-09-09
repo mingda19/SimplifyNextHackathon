@@ -39,6 +39,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agent/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Watch
+         * @description Current event-driven watch state -- see `watch.py` for the two
+         *     trigger conditions and the auto-shutdown rule.
+         */
+        get: operations["get_watch_agent_watch_get"];
+        put?: never;
+        /** Set Watch */
+        post: operations["set_watch_agent_watch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agent/runs/{thread_id}": {
         parameters: {
             query?: never;
@@ -85,6 +107,15 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** RunRequest */
+        RunRequest: {
+            /**
+             * Charity Type
+             * @default B
+             * @enum {string}
+             */
+            charity_type: "A" | "B";
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -97,6 +128,17 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** WatchRequest */
+        WatchRequest: {
+            /** Active */
+            active: boolean;
+            /**
+             * Charity Type
+             * @default B
+             * @enum {string}
+             */
+            charity_type: "A" | "B";
         };
     };
     responses: never;
@@ -133,7 +175,9 @@ export interface operations {
                 status?: string | null;
                 limit?: number;
             };
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -162,15 +206,15 @@ export interface operations {
     start_run_agent_runs_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["RunRequest"];
             };
         };
         responses: {
@@ -194,10 +238,78 @@ export interface operations {
             };
         };
     };
+    get_watch_agent_watch_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_watch_agent_watch_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_agent_runs__thread_id__get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                authorization?: string | null;
+            };
             path: {
                 thread_id: string;
             };
