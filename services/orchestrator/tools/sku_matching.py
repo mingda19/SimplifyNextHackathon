@@ -17,6 +17,7 @@ import logging
 
 import httpx
 from langchain_core.tools import tool
+from pantry_common.security import service_headers
 
 from ..config import settings
 
@@ -39,7 +40,8 @@ def sku_matching(terms: list[str], context: str | None = None) -> str:
     url = f"{settings.feedback_url.rstrip('/')}/feedback/match-skus"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"terms": terms, "context": context})
+            r = c.post(url, json={"terms": terms, "context": context},
+                      headers=service_headers())
             r.raise_for_status()
             return str(r.json()["matches"])
     except httpx.HTTPError as exc:

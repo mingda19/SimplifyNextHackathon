@@ -1,8 +1,26 @@
+# Serving deps only. torch is NOT here on purpose: the serving path (app.py
+# -> forecast.py) loads PROD_MODEL = "xgboost_pooled_h3" -- LSTM is
+# benchmark-only and never imported outside lstm_model.py/evaluator.py, which
+# are training/eval scripts run locally via the repo's root .venv (its
+# requirements.txt has its own torch pin), never inside this image. Baking
+# torch (100s of MB) into the serving container for a model it never loads
+# was most of this Dockerfile's build time.
+# xgboost is intentionally NOT listed here -- see its dedicated --no-deps,
+# exact-pinned install in the Dockerfile. Confirmed by actually building and
+# serving a forecast: 3.1.2 cannot load the pretrained model at all
+# (XGBRegressor.load_model raises "`_estimator_type` undefined" -- the
+# sklearn wrapper's serialized metadata isn't old enough to be compatible),
+# while 3.4.1 loads it fine. The exact version boundary between those two
+# wasn't individually tested, so don't loosen the pin without re-verifying
+# against artifacts/xgb_pooled_h3.json. Separately, every 3.4.x release
+# declares a HARD, unconditional dependency on a 250MB+ nvidia-nccl CUDA
+# package this CPU-only service never loads (verified: fit/predict works
+# fine with it completely absent) -- that's why it's --no-deps. numpy and
+# scipy, its two *real* dependencies, are already covered below via
+# pandas/scikit-learn.
 pandas>=2.2
 numpy>=1.26
 scikit-learn>=1.5
-xgboost>=2.1
-torch>=2.2
 python-dotenv>=1.0
 
 fastapi>=0.115,<1

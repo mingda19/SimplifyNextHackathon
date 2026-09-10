@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Copy, Trash2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
-export const Route = createFileRoute('/_app/people')({
+export const Route = createFileRoute('/(auth)/people')({
   component: LinksPage,
 })
 

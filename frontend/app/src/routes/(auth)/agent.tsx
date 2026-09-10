@@ -44,7 +44,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "cn";
 
-export const Route = createFileRoute("/_app/agent")({
+export const Route = createFileRoute("/(auth)/agent")({
   component: ApprovalsPage,
 });
 

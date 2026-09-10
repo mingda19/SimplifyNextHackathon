@@ -227,9 +227,9 @@ def get_run(thread_id: str, user: dict = Depends(require_charity)):
 
 
 @app.post("/agent/runs/{thread_id}/decision")
-def decide(thread_id: str, payload: dict = Body(...)):
+def decide(thread_id: str, payload: dict = Body(...), user: dict = Depends(require_charity)):
     """Approve or reject a queued plan. This is the guardrail node's other half."""
-    
+
     # 1. Parse the Payload
     decision = str(payload.get("decision", "")).lower()
     approved_steps = payload.get("approved_steps")
@@ -237,11 +237,14 @@ def decide(thread_id: str, payload: dict = Body(...)):
     if approved_steps is not None:
         approved_steps = [int(i) for i in approved_steps]
         decision = "approved" if approved_steps else "rejected"
-        
+
     if decision not in ("approved", "rejected"):
         raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected', or send approved_steps")
-        
-    who = payload.get("decided_by") or "unknown"
+
+    # Derived from the verified JWT, not payload["decided_by"] -- this is an
+    # approve/reject audit trail for real spend, so who did it can't be a
+    # value the caller just typed into the request body.
+    who = user.get("email") or user.get("sub") or "unknown"
 
     # 2. Database Validation
     row = _sql("SELECT * FROM agent.runs WHERE thread_id=%s", (thread_id,), fetch="one")

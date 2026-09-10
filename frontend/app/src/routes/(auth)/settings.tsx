@@ -1,4 +1,3 @@
-// src/routes/_app.settings.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -14,12 +13,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { PasswordRules, usePasswordPolicy } from "@/components/password-rules";
+import { PasswordRules } from "@/components/password-rules";
+import { usePasswordPolicy } from "@/hooks/use-password-policy";
 import { client, errorMessage, inventoryClient } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { allRulesMet } from "@/lib/password";
 
-export const Route = createFileRoute("/_app/settings")({
+export const Route = createFileRoute("/(auth)/settings")({
   component: SettingsPage,
 });
 

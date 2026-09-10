@@ -23,7 +23,7 @@ import { Progress } from "@/components/ui/progress";
 import { MessageSquare, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/_app/feedback")({
+export const Route = createFileRoute("/(auth)/feedback")({
   component: FeedbackPage,
 });
 

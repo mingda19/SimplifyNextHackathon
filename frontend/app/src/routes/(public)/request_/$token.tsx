@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { CheckCircle2, HeartHandshake } from 'lucide-react'
 
-export const Route = createFileRoute('/request/$token')({
+export const Route = createFileRoute('/(public)/request_/$token')({
   component: RequestIntakePage,
 })
 

@@ -1,5 +1,3 @@
-// src/routes/_app.orders.tsx
-//
 // Receiving is a per-ORDER confirmation, not a per-item stock edit. The charity
 // already told the agent what to buy; when the pallet turns up they tick it off
 // rather than re-keying quantities one SKU at a time through stock movements.
@@ -35,7 +33,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { errorMessage, inventoryClient } from "@/lib/api";
 import { formatSGD, formatSGDWhole, isOverdue, orderStatus, type Severity } from "@/lib/domain";
 
-export const Route = createFileRoute("/_app/orders")({
+export const Route = createFileRoute("/(auth)/orders")({
   component: OrdersPage,
 });
 

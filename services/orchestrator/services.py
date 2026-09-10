@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 import httpx
+from pantry_common.security import service_headers
 
 from . import fixtures
 from .config import settings
@@ -26,7 +27,7 @@ def _get(base: str, path: str) -> Any:
     url = f"{base.rstrip('/')}{path}"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.get(url)
+            r = c.get(url, headers=service_headers())
             r.raise_for_status()
             return r.json()
     except httpx.HTTPError as exc:
@@ -105,7 +106,8 @@ def resolve_feedback(skus: list[str], run_id: str, note: str = "") -> dict[str, 
     url = f"{settings.feedback_url.rstrip('/')}/feedback/resolve"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"skus": skus, "run_id": run_id, "note": note})
+            r = c.post(url, json={"skus": skus, "run_id": run_id, "note": note},
+                      headers=service_headers())
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -127,7 +129,7 @@ def extract_pending_feedback(limit: int = 50) -> dict[str, Any]:
     url = f"{settings.feedback_url.rstrip('/')}/feedback/extract-pending"
     try:
         with httpx.Client(timeout=settings.http_timeout * 4) as c:
-            r = c.post(url, params={"limit": limit})
+            r = c.post(url, params={"limit": limit}, headers=service_headers())
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -238,7 +240,7 @@ def vendor_quote(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/quote"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"sku": sku, "qty": qty})
+            r = c.post(url, json={"sku": sku, "qty": qty}, headers=service_headers())
     except httpx.HTTPError as exc:
         raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
 
@@ -282,7 +284,7 @@ def allocate_lot(sku: str, lot_id: str, qty: int, *, validate_only: bool = True)
     url = f"{settings.inventory_url.rstrip('/')}/inventory/{sku}{suffix}"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"lot_id": lot_id, "qty": qty})
+            r = c.post(url, json={"lot_id": lot_id, "qty": qty}, headers=service_headers())
     except httpx.HTTPError as exc:
         raise ServiceError(f"POST {url} failed: {type(exc).__name__}: {exc}") from exc
 
@@ -308,7 +310,7 @@ def vendor_order(vendor_id: str, sku: str, qty: int) -> dict[str, Any]:
     url = f"{settings.inventory_url.rstrip('/')}/vendor/{vendor_id}/order"
     try:
         with httpx.Client(timeout=settings.http_timeout) as c:
-            r = c.post(url, json={"sku": sku, "qty": qty})
+            r = c.post(url, json={"sku": sku, "qty": qty}, headers=service_headers())
     except httpx.HTTPError as exc:
         # A transport failure is not a vendor decision. Surface it as a
         # ServiceError so `act` routes to `adapt` instead of the graph dying.

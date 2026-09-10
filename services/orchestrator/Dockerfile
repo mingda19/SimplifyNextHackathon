@@ -1,10 +1,12 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/services
 WORKDIR /app
 COPY pyproject.toml ./
 COPY services/pantry_common ./services/pantry_common
 COPY services/orchestrator/requirements.txt ./services/orchestrator/requirements.txt
-RUN pip install --no-cache-dir . -r services/orchestrator/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install . -r services/orchestrator/requirements.txt
 COPY services/orchestrator ./services/orchestrator
 WORKDIR /app/services
 EXPOSE 8003

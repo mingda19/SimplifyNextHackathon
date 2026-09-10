@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { HeartHandshake } from 'lucide-react'
 import { toast } from 'sonner' // <-- Import toast
 
-export const Route = createFileRoute('/login')({
+export const Route = createFileRoute('/(public)/login')({
   component: LoginPage,
 })
 
