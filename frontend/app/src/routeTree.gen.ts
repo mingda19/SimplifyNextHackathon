@@ -10,13 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApprovalsRouteImport } from './routes/approvals'
-import { Route as DashboardRouteImport } from './routes/dashboard'
-import { Route as FeedbackRouteImport } from './routes/feedback'
-import { Route as InventoryRouteImport } from './routes/inventory'
-import { Route as LinksRouteImport } from './routes/links'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as RequestRouteImport } from './routes/request'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as AppAgentRouteImport } from './routes/_app.agent'
+import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppFeedbackRouteImport } from './routes/_app.feedback'
+import { Route as AppOrdersRouteImport } from './routes/_app.orders'
+import { Route as AppPeopleRouteImport } from './routes/_app.people'
+import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppStockRouteImport } from './routes/_app.stock'
 import { Route as RequestTokenRouteImport } from './routes/request.$token'
 
 const IndexRoute = IndexRouteImport.update({
@@ -24,29 +28,8 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApprovalsRoute = ApprovalsRouteImport.update({
-  id: '/approvals',
-  path: '/approvals',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DashboardRoute = DashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FeedbackRoute = FeedbackRouteImport.update({
-  id: '/feedback',
-  path: '/feedback',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InventoryRoute = InventoryRouteImport.update({
-  id: '/inventory',
-  path: '/inventory',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LinksRoute = LinksRouteImport.update({
-  id: '/links',
-  path: '/links',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -54,97 +37,153 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RequestRoute = RequestRouteImport.update({
+  id: '/request',
+  path: '/request',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppAgentRoute = AppAgentRouteImport.update({
+  id: '/agent',
+  path: '/agent',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDashboardRoute = AppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppFeedbackRoute = AppFeedbackRouteImport.update({
+  id: '/feedback',
+  path: '/feedback',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrdersRoute = AppOrdersRouteImport.update({
+  id: '/orders',
+  path: '/orders',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPeopleRoute = AppPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppStockRoute = AppStockRouteImport.update({
+  id: '/stock',
+  path: '/stock',
+  getParentRoute: () => AppRoute,
+} as any)
 const RequestTokenRoute = RequestTokenRouteImport.update({
-  id: '/request/$token',
-  path: '/request/$token',
-  getParentRoute: () => rootRouteImport,
+  id: '/$token',
+  path: '/$token',
+  getParentRoute: () => RequestRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/approvals': typeof ApprovalsRoute
-  '/dashboard': typeof DashboardRoute
-  '/feedback': typeof FeedbackRoute
-  '/inventory': typeof InventoryRoute
-  '/links': typeof LinksRoute
   '/login': typeof LoginRoute
+  '/request': typeof RequestRouteWithChildren
   '/signup': typeof SignupRoute
+  '/agent': typeof AppAgentRoute
+  '/dashboard': typeof AppDashboardRoute
+  '/feedback': typeof AppFeedbackRoute
+  '/orders': typeof AppOrdersRoute
+  '/people': typeof AppPeopleRoute
+  '/settings': typeof AppSettingsRoute
+  '/stock': typeof AppStockRoute
   '/request/$token': typeof RequestTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/approvals': typeof ApprovalsRoute
-  '/dashboard': typeof DashboardRoute
-  '/feedback': typeof FeedbackRoute
-  '/inventory': typeof InventoryRoute
-  '/links': typeof LinksRoute
   '/login': typeof LoginRoute
+  '/request': typeof RequestRouteWithChildren
   '/signup': typeof SignupRoute
+  '/agent': typeof AppAgentRoute
+  '/dashboard': typeof AppDashboardRoute
+  '/feedback': typeof AppFeedbackRoute
+  '/orders': typeof AppOrdersRoute
+  '/people': typeof AppPeopleRoute
+  '/settings': typeof AppSettingsRoute
+  '/stock': typeof AppStockRoute
   '/request/$token': typeof RequestTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/approvals': typeof ApprovalsRoute
-  '/dashboard': typeof DashboardRoute
-  '/feedback': typeof FeedbackRoute
-  '/inventory': typeof InventoryRoute
-  '/links': typeof LinksRoute
+  '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/request': typeof RequestRouteWithChildren
   '/signup': typeof SignupRoute
+  '/_app/agent': typeof AppAgentRoute
+  '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/feedback': typeof AppFeedbackRoute
+  '/_app/orders': typeof AppOrdersRoute
+  '/_app/people': typeof AppPeopleRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/_app/stock': typeof AppStockRoute
   '/request/$token': typeof RequestTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/approvals'
+    | '/login'
+    | '/request'
+    | '/signup'
+    | '/agent'
     | '/dashboard'
     | '/feedback'
-    | '/inventory'
-    | '/links'
-    | '/login'
-    | '/signup'
+    | '/orders'
+    | '/people'
+    | '/settings'
+    | '/stock'
     | '/request/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/approvals'
+    | '/login'
+    | '/request'
+    | '/signup'
+    | '/agent'
     | '/dashboard'
     | '/feedback'
-    | '/inventory'
-    | '/links'
-    | '/login'
-    | '/signup'
+    | '/orders'
+    | '/people'
+    | '/settings'
+    | '/stock'
     | '/request/$token'
   id:
     | '__root__'
     | '/'
-    | '/approvals'
-    | '/dashboard'
-    | '/feedback'
-    | '/inventory'
-    | '/links'
+    | '/_app'
     | '/login'
+    | '/request'
     | '/signup'
+    | '/_app/agent'
+    | '/_app/dashboard'
+    | '/_app/feedback'
+    | '/_app/orders'
+    | '/_app/people'
+    | '/_app/settings'
+    | '/_app/stock'
     | '/request/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ApprovalsRoute: typeof ApprovalsRoute
-  DashboardRoute: typeof DashboardRoute
-  FeedbackRoute: typeof FeedbackRoute
-  InventoryRoute: typeof InventoryRoute
-  LinksRoute: typeof LinksRoute
+  AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  RequestRoute: typeof RequestRouteWithChildren
   SignupRoute: typeof SignupRoute
-  RequestTokenRoute: typeof RequestTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -156,39 +195,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/approvals': {
-      id: '/approvals'
-      path: '/approvals'
-      fullPath: '/approvals'
-      preLoaderRoute: typeof ApprovalsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/dashboard': {
-      id: '/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof DashboardRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/feedback': {
-      id: '/feedback'
-      path: '/feedback'
-      fullPath: '/feedback'
-      preLoaderRoute: typeof FeedbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/inventory': {
-      id: '/inventory'
-      path: '/inventory'
-      fullPath: '/inventory'
-      preLoaderRoute: typeof InventoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/links': {
-      id: '/links'
-      path: '/links'
-      fullPath: '/links'
-      preLoaderRoute: typeof LinksRouteImport
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -198,6 +209,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/request': {
+      id: '/request'
+      path: '/request'
+      fullPath: '/request'
+      preLoaderRoute: typeof RequestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signup': {
       id: '/signup'
       path: '/signup'
@@ -205,26 +223,104 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/agent': {
+      id: '/_app/agent'
+      path: '/agent'
+      fullPath: '/agent'
+      preLoaderRoute: typeof AppAgentRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/dashboard': {
+      id: '/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AppDashboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/feedback': {
+      id: '/_app/feedback'
+      path: '/feedback'
+      fullPath: '/feedback'
+      preLoaderRoute: typeof AppFeedbackRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/orders': {
+      id: '/_app/orders'
+      path: '/orders'
+      fullPath: '/orders'
+      preLoaderRoute: typeof AppOrdersRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/people': {
+      id: '/_app/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/stock': {
+      id: '/_app/stock'
+      path: '/stock'
+      fullPath: '/stock'
+      preLoaderRoute: typeof AppStockRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/request/$token': {
       id: '/request/$token'
-      path: '/request/$token'
+      path: '/$token'
       fullPath: '/request/$token'
       preLoaderRoute: typeof RequestTokenRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof RequestRoute
     }
   }
 }
 
+interface AppRouteChildren {
+  AppAgentRoute: typeof AppAgentRoute
+  AppDashboardRoute: typeof AppDashboardRoute
+  AppFeedbackRoute: typeof AppFeedbackRoute
+  AppOrdersRoute: typeof AppOrdersRoute
+  AppPeopleRoute: typeof AppPeopleRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppStockRoute: typeof AppStockRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAgentRoute: AppAgentRoute,
+  AppDashboardRoute: AppDashboardRoute,
+  AppFeedbackRoute: AppFeedbackRoute,
+  AppOrdersRoute: AppOrdersRoute,
+  AppPeopleRoute: AppPeopleRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppStockRoute: AppStockRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
+interface RequestRouteChildren {
+  RequestTokenRoute: typeof RequestTokenRoute
+}
+
+const RequestRouteChildren: RequestRouteChildren = {
+  RequestTokenRoute: RequestTokenRoute,
+}
+
+const RequestRouteWithChildren =
+  RequestRoute._addFileChildren(RequestRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ApprovalsRoute: ApprovalsRoute,
-  DashboardRoute: DashboardRoute,
-  FeedbackRoute: FeedbackRoute,
-  InventoryRoute: InventoryRoute,
-  LinksRoute: LinksRoute,
+  AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  RequestRoute: RequestRouteWithChildren,
   SignupRoute: SignupRoute,
-  RequestTokenRoute: RequestTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

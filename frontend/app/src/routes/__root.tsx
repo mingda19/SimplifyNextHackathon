@@ -1,12 +1,13 @@
 import { Toaster } from "@/components/ui/sonner";
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/router-devtools";
+import type { RouterContext } from "@/lib/router-context";
 
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<RouterContext>()({
   component: () => (
     <>
       <Outlet />
-      <Toaster richColors position="top-center" theme="light" />
+      <Toaster richColors position="top-center" />
       <TanStackRouterDevtools />
     </>
   ),

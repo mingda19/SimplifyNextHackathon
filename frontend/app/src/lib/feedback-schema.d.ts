@@ -14,8 +14,77 @@ export interface paths {
         /** Get Feedback */
         get: operations["get_feedback_feedback_get"];
         put?: never;
-        /** Post Feedback */
+        /**
+         * Post Feedback
+         * @description Store the message and return immediately. Extraction runs in the
+         *     background.
+         *
+         *     This was briefly made synchronous (commit the row, run extraction inline,
+         *     THEN respond) so a message was guaranteed visible to the agent right
+         *     away. In practice that meant the beneficiary's screen sat on a spinner
+         *     for however long the Bedrock call took -- real, noticeable latency on
+         *     what should be a "thank you, we heard you" moment. The raw text, lang,
+         *     and channel are committed to the DB before this function does anything
+         *     else either way, so the words are never at risk regardless of extraction
+         *     timing.
+         *
+         *     Freshness is instead the `feedback_extraction` orchestrator tool's job:
+         *     every time the agent calls it, it first sweeps up anything still
+         *     `pending`/`failed` via `extract_pending()` before reading unmet needs, so
+         *     a message posted seconds ago is caught up by the time the agent actually
+         *     looks -- see `tools/feedback_extraction.py`. A failed extraction here
+         *     just leaves the row `failed`; nothing is lost, it's retried the same way.
+         *
+         *     Set FEEDBACK_SYNC_EXTRACTION=1 to force the old inline behaviour (mostly
+         *     useful for a demo where you want the extracted fields in this response).
+         */
         post: operations["post_feedback_feedback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback/extract-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Extract Pending
+         * @description Re-run extraction for anything still pending or failed.
+         *
+         *     Backfill for rows created while extraction was broken (missing credentials,
+         *     a service restart mid-request). Without this they stay invisible to
+         *     /feedback/unmet-needs permanently, because nothing ever retries them.
+         */
+        post: operations["extract_pending_feedback_extract_pending_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback/count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count Feedback
+         * @description Row count only -- for the orchestrator's watch-mode poller, which
+         *     checks this every WATCH_POLL_SECONDS and must not pull the whole table
+         *     (thousands of rows in a seeded dataset) just to see if 10 more arrived.
+         */
+        get: operations["count_feedback_feedback_count_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -42,6 +111,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/feedback/match-skus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Match Skus
+         * @description Deterministic SKU matching only (layers 1-3: exact code, alias, fuzzy)
+         *     -- never LLM adjudication, and never persists anything. Built for the
+         *     orchestrator's `sku_matching` tool: an ad hoc "does a SKU exist for this
+         *     term" check that costs $0 and writes nothing, independent of whatever
+         *     MATCHER_LLM_ADJUDICATION is set to for the main extraction pipeline --
+         *     this endpoint always calls the matcher with `llm_adjudicate=None`.
+         */
+        post: operations["match_skus_feedback_match_skus_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -56,6 +150,51 @@ export interface paths {
         get: operations["health_health_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Feedback
+         * @description Mark feedback as addressed so it stops being re-proposed.
+         *
+         *     Called by the orchestrator's COMMIT node with the SKUs an approved plan
+         *     actually ordered. Only rows whose `mentioned_skus` overlap those SKUs are
+         *     closed — a message asking for rice AND diapers is not resolved by an order
+         *     that only covers rice.
+         */
+        post: operations["resolve_feedback_feedback_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feedback/{feedback_id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reopen Feedback
+         * @description Undo a resolution — the need was not actually met.
+         */
+        post: operations["reopen_feedback_feedback__feedback_id__reopen_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -101,6 +240,44 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** MatchSkusIn */
+        MatchSkusIn: {
+            /** Terms */
+            terms: string[];
+            /** Context */
+            context?: string | null;
+        };
+        /** MatchSkusOut */
+        MatchSkusOut: {
+            /** Matches */
+            matches: components["schemas"]["SkuMatch"][];
+        };
+        /** ResolveIn */
+        ResolveIn: {
+            /** Skus */
+            skus?: string[] | null;
+            /** Feedback Ids */
+            feedback_ids?: number[] | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Note */
+            note?: string | null;
+        };
+        /** SkuMatch */
+        SkuMatch: {
+            /** Term */
+            term: string;
+            /** Matched Sku */
+            matched_sku: string | null;
+            /** Confidence */
+            confidence: number;
+            /** Method */
+            method: string;
+            /** Near Sku */
+            near_sku: string | null;
+            /** Unmet Qualifier */
+            unmet_qualifier: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -186,6 +363,68 @@ export interface operations {
             };
         };
     };
+    extract_pending_feedback_extract_pending_post: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    count_feedback_feedback_count_get: {
+        parameters: {
+            query?: {
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_unmet_needs_feedback_unmet_needs_get: {
         parameters: {
             query?: {
@@ -218,6 +457,39 @@ export interface operations {
             };
         };
     };
+    match_skus_feedback_match_skus_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatchSkusIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchSkusOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -234,6 +506,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    resolve_feedback_feedback_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reopen_feedback_feedback__feedback_id__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                feedback_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

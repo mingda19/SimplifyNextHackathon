@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { Copy, Link as LinkIcon, Trash2, Plus } from 'lucide-react'
+import { Copy, Trash2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 
-export const Route = createFileRoute('/links')({
+export const Route = createFileRoute('/_app/people')({
   component: LinksPage,
 })
 

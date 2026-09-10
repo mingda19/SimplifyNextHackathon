@@ -68,6 +68,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/inventory/{sku}/allocate/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Allocation */
+        post: operations["validate_allocation_inventory__sku__allocate_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/inventory/{sku}/receive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Receive Stock */
+        post: operations["receive_stock_inventory__sku__receive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/inventory/{sku}": {
         parameters: {
             query?: never;
@@ -94,6 +128,88 @@ export interface paths {
          * @description Patch supplied mutable fields on an existing item.
          */
         patch: operations["patch_inventory_item_inventory__sku__patch"];
+        trace?: never;
+    };
+    "/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List purchase orders */
+        get: operations["list_orders_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/inbound": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open quantity on the way, per SKU
+         * @description `{sku: {qty_inbound, orders, earliest_expected}}` for PLACED orders.
+         */
+        get: operations["inbound_orders_inbound_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{order_id}/receive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark an order as arrived
+         * @description Book a delivered order into stock.
+         *
+         *     Receiving creates a LOT rather than just bumping `on_hand`, because a lot
+         *     carries its own expiry date — that is what makes FEFO allocation and the
+         *     EXPIRING_SOON alerts work. Bumping the running total instead would put
+         *     stock in the system with no expiry, and it would silently never appear in
+         *     an expiry alert.
+         *
+         *     Optional body: {"qty": <partial>, "expiry_date": "YYYY-MM-DD"}.
+         */
+        post: operations["receive_order_orders__order_id__receive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{order_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel an open order */
+        post: operations["cancel_order_orders__order_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/vendor/{id}/quote": {
@@ -134,6 +250,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Settings */
+        patch: operations["update_settings_settings_patch"];
         trace?: never;
     };
     "/health": {
@@ -204,6 +338,11 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** HTTPValidationError */
+        HTTPValidationError: {
+            /** Detail */
+            detail?: components["schemas"]["ValidationError"][];
+        };
         /**
          * InventoryAlertResponse
          * @description A typed inventory alert.
@@ -222,6 +361,16 @@ export interface components {
             lot_id?: string | null;
             /** Expiry Date */
             expiry_date?: string | null;
+            /**
+             * Qty Inbound
+             * @default 0
+             */
+            qty_inbound: number;
+            /**
+             * Covered By Inbound
+             * @default false
+             */
+            covered_by_inbound: boolean;
             /** Days Cover */
             days_cover?: number | null;
         };
@@ -253,6 +402,9 @@ export interface components {
             preferred_vendor_id?: string | null;
             /** Dspi Series */
             dspi_series?: string | null;
+            /** Opening Expiry Date */
+            opening_expiry_date?: string | null;
+            opening_source?: components["schemas"]["LotSource"] | null;
         };
         /**
          * ItemDetailResponse
@@ -372,6 +524,47 @@ export interface components {
          * @enum {string}
          */
         OrderStatus: "PLACED" | "FULFILLED" | "CANCELLED";
+        /** ReceiptRequest */
+        ReceiptRequest: {
+            /** Qty */
+            qty: number;
+            /**
+             * Expiry Date
+             * Format: date
+             */
+            expiry_date: string;
+            source: components["schemas"]["LotSource"];
+        };
+        /** SettingsResponse */
+        SettingsResponse: {
+            /** Monthly Budget Sgd */
+            monthly_budget_sgd: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Updated By */
+            updated_by?: string | null;
+        };
+        /** SettingsUpdate */
+        SettingsUpdate: {
+            /** Monthly Budget Sgd */
+            monthly_budget_sgd: number | string;
+        };
+        /** ValidationError */
+        ValidationError: {
+            /** Location */
+            loc: (string | number)[];
+            /** Message */
+            msg: string;
+            /** Error Type */
+            type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
+        };
         /**
          * VendorOrderRequest
          * @description Request a committing purchase order.
@@ -381,6 +574,8 @@ export interface components {
             sku: string;
             /** Qty */
             qty: number;
+            /** Expected Unit Price Sgd */
+            expected_unit_price_sgd?: number | string | null;
         };
         /**
          * VendorOrderResponse
@@ -566,6 +761,70 @@ export interface operations {
     post_allocation_inventory__sku__allocate_post: {
         parameters: {
             query?: never;
+            header?: {
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                sku: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AllocationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllocationResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    validate_allocation_inventory__sku__allocate_validate_post: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 sku: string;
@@ -607,6 +866,61 @@ export interface operations {
             };
             /** @description Standardized domain error response. */
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    receive_stock_inventory__sku__receive_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "idempotency-key"?: string | null;
+            };
+            path: {
+                sku: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReceiptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LotResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Standardized domain error response. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -765,6 +1079,138 @@ export interface operations {
             };
         };
     };
+    list_orders_orders_get: {
+        parameters: {
+            query?: {
+                /** @description PLACED | FULFILLED | CANCELLED */
+                status?: string | null;
+                sku?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inbound_orders_inbound_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+            };
+        };
+    };
+    receive_order_orders__order_id__receive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_order_orders__order_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                order_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     quote_vendor_vendor__id__quote_post: {
         parameters: {
             query?: never;
@@ -844,6 +1290,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
+                "idempotency-key"?: string | null;
                 "X-Demo-Rate-Limit"?: string | null;
             };
             path: {
@@ -911,6 +1358,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
+    get_settings_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+        };
+    };
+    update_settings_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
