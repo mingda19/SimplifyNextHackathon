@@ -1,4 +1,3 @@
-// src/routes/_app.stock.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, RefreshCw } from "lucide-react";
@@ -40,7 +39,7 @@ import {
   type Tag,
 } from "@/lib/domain";
 
-export const Route = createFileRoute("/_app/stock")({
+export const Route = createFileRoute("/(auth)/stock")({
   component: StockPage,
 });
 

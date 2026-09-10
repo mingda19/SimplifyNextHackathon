@@ -7,10 +7,11 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Building2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { PasswordRules, usePasswordPolicy } from '@/components/password-rules'
+import { PasswordRules } from '@/components/password-rules'
+import { usePasswordPolicy } from '@/hooks/use-password-policy'
 import { allRulesMet } from '@/lib/password'
 
-export const Route = createFileRoute('/signup')({
+export const Route = createFileRoute('/(public)/signup')({
   component: SignupPage,
 })
 

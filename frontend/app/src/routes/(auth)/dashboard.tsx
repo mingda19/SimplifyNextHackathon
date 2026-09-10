@@ -1,4 +1,3 @@
-// src/routes/_app.dashboard.tsx
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ArrowRight, Bot, Package, Truck, MessageSquareHeart } from "lucide-react";
@@ -15,7 +14,7 @@ import {
   type StockItem,
 } from "@/lib/domain";
 
-export const Route = createFileRoute("/_app/dashboard")({
+export const Route = createFileRoute("/(auth)/dashboard")({
   component: DashboardPage,
 });
 

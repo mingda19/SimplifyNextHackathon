@@ -15,7 +15,7 @@ import {
  * until the session check settles, so `context.auth.user` is never
  * "not known yet" here.
  */
-export const Route = createFileRoute("/_app")({
+export const Route = createFileRoute("/(auth)")({
   beforeLoad: ({ context }) => {
     const { user } = context.auth;
     if (!user) throw redirect({ to: "/login" });
