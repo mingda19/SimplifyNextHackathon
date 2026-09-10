@@ -15,6 +15,7 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 from fastapi import Depends, FastAPI, HTTPException, Query  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from pantry_common.security import require_operator  # noqa: E402
 
@@ -23,6 +24,18 @@ import forecast as F  # noqa: E402
 app = FastAPI(title="price_forecaster",
               description="3-month commodity price direction for charity procurement",
               version="1.0.0")
+
+# Every other service has this -- price_forecaster didn't, which only went
+# unnoticed because the frontend previously reached it through Vite's dev
+# proxy (same-origin). Now that src/lib/api.ts calls it directly on :8004,
+# this is a real cross-origin request and the browser blocks it without
+# these headers.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # dev only; tighten before this is ever public
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

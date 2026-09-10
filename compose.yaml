@@ -99,7 +99,13 @@ services:
       schema-bootstrap:
         condition: service_completed_successfully
     volumes:
-      - ~/.aws:/tmp/.aws:ro
+      # Not :ro -- boto3's SSO token provider writes the refreshed token back
+      # to ~/.aws/sso/cache/ (via HOME=/tmp above) whenever the cached one is
+      # close to expiring. A read-only mount blocks that write outright:
+      # "[Errno 30] Read-only file system: '/tmp/.aws/sso/cache/...'". This
+      # is exactly what running AWS CLI/SDK tooling directly on the host
+      # does too -- ~/.aws is expected to be writable there as well.
+      - ~/.aws:/tmp/.aws
 
   orchestrator:
     build:
@@ -121,7 +127,13 @@ services:
       AWS_SHARED_CREDENTIALS_FILE: /tmp/.aws/credentials
     volumes:
       - orchestrator_data:/data
-      - ~/.aws:/tmp/.aws:ro
+      # Not :ro -- boto3's SSO token provider writes the refreshed token back
+      # to ~/.aws/sso/cache/ (via HOME=/tmp above) whenever the cached one is
+      # close to expiring. A read-only mount blocks that write outright:
+      # "[Errno 30] Read-only file system: '/tmp/.aws/sso/cache/...'". This
+      # is exactly what running AWS CLI/SDK tooling directly on the host
+      # does too -- ~/.aws is expected to be writable there as well.
+      - ~/.aws:/tmp/.aws
     ports: ["127.0.0.1:8003:8003"]
     depends_on:
       schema-bootstrap:

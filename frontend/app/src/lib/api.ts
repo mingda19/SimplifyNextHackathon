@@ -7,17 +7,20 @@ import type { paths as InventoryPaths } from "./inventory-schema";
 import type { paths as OrchestratorPaths } from "./orchestrator-schema";
 import type { paths as PricingPaths } from "./pricing-schema";
 
-// Base URLs are relative and go through the Vite dev proxy (see vite.config.ts),
-// so there is no CORS in dev and the same paths work behind a load balancer.
+// No dev proxy -- each client calls its backend's own port directly (see
+// each service's own `uvicorn --port` in the Makefile/README), so this is a
+// cross-origin request in the browser's eyes. Every service already has
+// permissive dev CORS *except* price_forecaster, which needed it added.
 //
-// The services mount their routers under their own prefix, so full paths
-// legitimately repeat the segment: baseUrl "/api/auth" + path "/auth/login"
-// => /api/auth/auth/login. Do not "simplify" this; it 404s.
-export const client = createClient<AuthPaths>({ baseUrl: "/api/auth" });
-export const feedbackClient = createClient<FeedbackPaths>({ baseUrl: "/api/feedback" });
-export const inventoryClient = createClient<InventoryPaths>({ baseUrl: "/api/inventory" });
-export const orchestratorClient = createClient<OrchestratorPaths>({ baseUrl: "/api/agent" });
-export const pricingClient = createClient<PricingPaths>({ baseUrl: "/api/pricing" });
+// Base URLs are bare origins, not "/api/<service>" -- unlike the old
+// proxy setup, each service's own routes already start with its own prefix
+// (auth's are "/auth/...", inventory's "/inventory"/"/orders"/"/vendor",
+// etc.), so adding another path segment here would double it up and 404.
+export const client = createClient<AuthPaths>({ baseUrl: "http://localhost:8001" });
+export const feedbackClient = createClient<FeedbackPaths>({ baseUrl: "http://localhost:8002" });
+export const inventoryClient = createClient<InventoryPaths>({ baseUrl: "http://localhost:8000" });
+export const orchestratorClient = createClient<OrchestratorPaths>({ baseUrl: "http://localhost:8003" });
+export const pricingClient = createClient<PricingPaths>({ baseUrl: "http://localhost:8004" });
 
 /* ---------------------------------- token --------------------------------- */
 
