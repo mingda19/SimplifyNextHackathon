@@ -1,12 +1,14 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from '@/lib/use-auth'
+import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Building2 } from 'lucide-react'
-import { toast } from 'sonner' // <-- Import toast
+import { toast } from 'sonner'
+import { PasswordRules, usePasswordPolicy } from '@/components/password-rules'
+import { allRulesMet } from '@/lib/password'
 
 export const Route = createFileRoute('/signup')({
   component: SignupPage,
@@ -22,34 +24,35 @@ function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const rules = usePasswordPolicy()
+  const canSubmit = allRulesMet(rules, password)
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-    
+
     try {
-      await signup(email, password, displayName)
+      const user = await signup(email, password, displayName)
       toast.success("Account created successfully!")
-      navigate({ to: '/dashboard' })
-    } catch (err: any) {
-      // Fire the capitalized error toast
-      const errorMessage = err.message || 'Failed to create account.'
-      toast.error(capitalize(errorMessage))
+      navigate({ to: user.role === 'charity' ? '/stock' : '/request', replace: true })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create account.'
+      toast.error(capitalize(message))
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-stone-50/50 p-4">
-      <Card className="w-full max-w-md shadow-sm border-stone-200">
+    <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
+      <Card className="w-full max-w-md shadow-sm">
         <CardHeader className="space-y-3 text-center pb-6">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <Building2 className="h-6 w-6 text-primary" />
           </div>
           <div className="space-y-1">
             <CardTitle className="text-2xl font-bold tracking-tight">Create an account</CardTitle>
-            <CardDescription className="text-stone-500 text-base">
+            <CardDescription className="text-muted-foreground text-base">
               Register your charity to start issuing recipient requests.
             </CardDescription>
           </div>
@@ -64,7 +67,7 @@ function SignupPage() {
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 required 
-                className="bg-white"
+               
               />
             </div>
             <div className="space-y-2">
@@ -76,7 +79,7 @@ function SignupPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required 
-                className="bg-white"
+               
               />
             </div>
             <div className="space-y-2">
@@ -88,20 +91,22 @@ function SignupPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required 
-                className="bg-white"
+               
               />
-              <p className="text-[0.8rem] text-stone-500">
-                Must be at least 10 characters with numbers and letters.
-              </p>
+              <PasswordRules rules={rules} password={password} />
             </div>
-            
-            <Button type="submit" className="w-full text-base h-11" disabled={isLoading}>
+
+            <Button
+              type="submit"
+              className="w-full text-base h-11"
+              disabled={isLoading || !canSubmit}
+            >
               {isLoading ? "Creating account..." : "Create Account"}
             </Button>
           </form>
         </CardContent>
-        <CardFooter className="flex justify-center border-t border-stone-100 pt-6">
-          <p className="text-sm text-stone-500">
+        <CardFooter className="flex justify-center border-t border-border pt-6">
+          <p className="text-sm text-muted-foreground">
             Already have an account?{' '}
             <Link to="/login" className="font-semibold text-primary hover:underline">
               Sign in here

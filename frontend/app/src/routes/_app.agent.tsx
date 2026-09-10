@@ -2,7 +2,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { orchestratorClient } from "@/lib/api";
-import { useAuth } from "@/lib/use-auth";
+import { useAuth } from "@/lib/auth";
 import {
   Card,
   CardContent,
@@ -44,7 +44,7 @@ import {
 import { toast } from "sonner";
 import { cn } from "cn";
 
-export const Route = createFileRoute("/approvals")({
+export const Route = createFileRoute("/_app/agent")({
   component: ApprovalsPage,
 });
 

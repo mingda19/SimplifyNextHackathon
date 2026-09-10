@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useAuth } from '@/lib/use-auth'
+import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,28 +27,28 @@ function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
     try {
-      await login(email, password)
-      toast.success("Welcome back!") // Optional success toast!
-      navigate({ to: '/dashboard' })
-    } catch (err: any) {
-      // Fire the capitalized error toast
-      const errorMessage = err.message || 'Incorrect email or password.'
-      toast.error(capitalize(errorMessage))
+      const user = await login(email, password)
+      toast.success("Welcome back!")
+      // Route by role: charity staff run operations, everyone else files requests.
+      navigate({ to: user.role === 'charity' ? '/stock' : '/request', replace: true })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Incorrect email or password.'
+      toast.error(capitalize(message))
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-stone-50/50 p-4">
-      <Card className="w-full max-w-md shadow-sm border-stone-200">
+    <div className="flex min-h-screen w-full items-center justify-center bg-muted/40 p-4">
+      <Card className="w-full max-w-md shadow-sm">
         <CardHeader className="space-y-3 text-center pb-6">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
             <HeartHandshake className="h-6 w-6 text-primary" />
           </div>
           <div className="space-y-1">
             <CardTitle className="text-2xl font-bold tracking-tight">Welcome back</CardTitle>
-            <CardDescription className="text-stone-500 text-base">
+            <CardDescription className="text-muted-foreground text-base">
               Enter your credentials to access your charity dashboard.
             </CardDescription>
           </div>
@@ -64,7 +64,7 @@ function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required 
-                className="bg-white"
+               
               />
             </div>
             <div className="space-y-2">
@@ -78,7 +78,7 @@ function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required 
-                className="bg-white"
+               
               />
             </div>
             
@@ -87,8 +87,8 @@ function LoginPage() {
             </Button>
           </form>
         </CardContent>
-        <CardFooter className="flex justify-center border-t border-stone-100 pt-6">
-          <p className="text-sm text-stone-500">
+        <CardFooter className="flex justify-center border-t border-border pt-6">
+          <p className="text-sm text-muted-foreground">
             Don't have an account?{' '}
             <Link to="/signup" className="font-semibold text-primary hover:underline">
               Register your charity

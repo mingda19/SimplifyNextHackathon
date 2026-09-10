@@ -8,7 +8,12 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "generate:api": "npx openapi-typescript http://localhost:8001/openapi.json -o ./src/lib/schema.d.ts"
+    "generate:api": "npm run generate:auth && npm run generate:inventory && npm run generate:feedback && npm run generate:agent && npm run generate:pricing",
+    "generate:auth": "openapi-typescript http://127.0.0.1:8001/openapi.json -o ./src/lib/schema.d.ts",
+    "generate:inventory": "openapi-typescript http://127.0.0.1:8000/openapi.json -o ./src/lib/inventory-schema.d.ts",
+    "generate:feedback": "openapi-typescript http://127.0.0.1:8002/openapi.json -o ./src/lib/feedback-schema.d.ts",
+    "generate:agent": "openapi-typescript http://127.0.0.1:8003/openapi.json -o ./src/lib/orchestrator-schema.d.ts",
+    "generate:pricing": "openapi-typescript http://127.0.0.1:8004/openapi.json -o ./src/lib/pricing-schema.d.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
