@@ -213,6 +213,24 @@ def _checklist(state: AgentState, staged: list[dict[str, Any]]) -> dict[str, Any
 
 
 def finalize(state: AgentState) -> dict[str, Any]:
+    # A halt with nothing to show (e.g. BudgetExceeded or an unhandled
+    # exception on turn 1, before submit_diagnosis or any action_generator
+    # call ever succeeded) skips the interrupt entirely, so `_run_graph`'s
+    # `elif result.get("halt_reason")` branch marks the run `failed` instead
+    # of `pending_approval`. Previously `interrupt()` ran unconditionally
+    # here, so `"__interrupt__" in result` was always true by the time
+    # `_run_graph` looked -- a run that failed before doing anything looked
+    # identical to a normal completed run waiting on a human, just with an
+    # empty plan and no visible indication anything had gone wrong.
+    #
+    # A halt WITH something staged or diagnosed (e.g. the turn cap hit after
+    # several actions already succeeded) still goes through interrupt()
+    # below -- there is a partial plan worth a human's review, and skipping
+    # straight to `failed` would discard real, usable work. `halt_reason` is
+    # carried into the summary either way so the human sees it stopped early.
+    if state.get("halt_reason") and not state.get("staged") and not state.get("diagnosis"):
+        return {"halt_reason": state["halt_reason"]}
+
     # -- build + interrupt (see module docstring: nothing above this line in
     #    a resumed call may have run a side effect) --------------------------
     summary = build_summary(state)
@@ -246,10 +264,28 @@ def finalize(state: AgentState) -> dict[str, Any]:
     if state.get("approval_version") != APPROVAL_VERSION:
         return {"approval": verdict, "approved_steps": approved_steps,
                 "halt_reason": "Legacy approval: review existing orders and start a new run."}
-    if verdict != "approved" or state.get("halt_reason"):
+    if verdict != "approved":
+        # halt_reason is explicitly None here, not "Human declined this
+        # run." -- api.py's decide() checks `elif result.get("halt_reason")`
+        # to decide between status='failed' and status=decision ('rejected'
+        # here). Putting the decline message IN halt_reason made every
+        # rejected run show up mislabeled as 'failed' in the dashboard,
+        # identical to a genuine agent error -- the same class of bug as the
+        # interrupt-skip fix above, just on the other side of the decision.
+        # A human choosing to reject a plan is not a failure.
         return {"approval": verdict, "approved_steps": approved_steps,
-                "halt_reason": state.get("halt_reason") if verdict == "approved"
-                else "Human declined this run."}
+                "halt_reason": None}
+    # NOTE: an approved run proceeds to commit below even if `halt_reason` is
+    # set (e.g. the turn cap was hit after staging real actions) -- a human
+    # who explicitly approved what was staged expects it to actually commit,
+    # not silently no-op. This used to bail out here on ANY halt_reason,
+    # which meant approving a turn-cap-halted run did nothing at all: the
+    # "preserve partial progress" fix above is only real if approving that
+    # partial progress actually commits it. The commit paths below all
+    # explicitly clear halt_reason to None for the same reason as the
+    # rejected case above -- otherwise a run that halted, was reviewed, and
+    # committed successfully still reads as 'failed' to decide()'s check,
+    # and its real outcome (orders actually placed) never gets saved.
 
     thread_id = state.get("thread_id")
     if not thread_id:
@@ -258,6 +294,7 @@ def finalize(state: AgentState) -> dict[str, Any]:
     charity_type = state.get("charity_type", "B")
     if charity_type == "A":
         return {"approval": verdict, "approved_steps": approved_steps,
+                "halt_reason": None,
                 "outcome": _checklist(state, staged),
                 "attempts": [{"node": "finalize", "ok": True,
                               "kind": "acquisition_checklist"}]}
@@ -325,6 +362,7 @@ def finalize(state: AgentState) -> dict[str, Any]:
              resolution.get("resolved", 0))
 
     return {"approval": verdict, "approved_steps": approved_steps,
+            "halt_reason": None,
             "outcome": outcome,
             "attempts": [{"node": "finalize", "ok": True, "kind": outcome["kind"],
                           "committed": len(committed), "declined": len(declined),

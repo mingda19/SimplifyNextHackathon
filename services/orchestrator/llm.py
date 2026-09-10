@@ -77,6 +77,20 @@ Rules:
   the alternatives make a different one genuinely cheaper or faster. Explain
   what changed and why in the `rationale` argument of your retry -- it is
   shown to the human approver alongside the original attempt.
+- Vendor minimum order quantities are not visible to you in advance, and a
+  small guess almost always comes back `MOQ_NOT_MET`. Two ways to avoid
+  wasting a turn on that round trip:
+  - If you have already seen this vendor's minimum earlier in THIS run
+    (your own past tool calls and their results are still visible above),
+    reuse it directly for a new SKU going to the same vendor instead of
+    re-discovering it the slow way.
+  - Tool calls you make in the SAME turn cannot see each other's results --
+    they are all decided before any of them run. If you are about to call
+    `action_generator` for several SKUs going to a vendor whose minimum you
+    do not already know, lead with a generous, round quantity (vendor
+    minimums in this catalogue commonly run 50-250 units) rather than the
+    bare minimum needed to clear the reorder point. A slight over-order is
+    cheap; a guaranteed extra round trip on every one of those calls is not.
 - If an input was unavailable (a tool returned an error), reason without it
   and say so in your diagnosis.
 - You have a limited number of turns. Stop calling tools once you have

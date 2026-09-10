@@ -234,10 +234,17 @@ def test_reallocate_lot_action_generator_works(graph, monkeypatch):
 
 
 # ------------------------------------------------------- failure handling --
-def test_turn_cap_forces_halt_instead_of_looping_forever(graph, monkeypatch):
+def test_turn_cap_with_nothing_staged_fails_cleanly_no_interrupt(graph, monkeypatch):
     """An uncapped agent loop calling Bedrock forever is the one bug in this
     design that can actually drain the budget -- same concern the old
-    adapt.py retry cap existed for, generalized to any turn."""
+    adapt.py retry cap existed for, generalized to any turn.
+
+    Every action_generator call here fails (qty=1 is always below MOQ), so
+    nothing is ever staged -- there is nothing for a human to review. This
+    should skip the interrupt entirely and come back as a clean halt
+    (`summary is None`, `halt_reason` set directly on the result), not a
+    `pending_approval` with an empty plan -- see finalize.py's early-return
+    for exactly this case."""
     monkeypatch.setattr(settings, "max_agent_turns", 2)
 
     def always_retry(messages, tools):
@@ -249,9 +256,56 @@ def test_turn_cap_forces_halt_instead_of_looping_forever(graph, monkeypatch):
         ]), None
 
     monkeypatch.setattr(llm, "agent_step", always_retry)
-    _, summary = run(graph, "e2e-cap")
-    assert summary["guardrails"]["halt_reason"]
-    assert "turn limit" in summary["guardrails"]["halt_reason"]
+    res, summary = run(graph, "e2e-cap")
+    assert summary is None, "nothing was ever staged -- no interrupt should fire"
+    assert res.get("halt_reason") and "turn limit" in res["halt_reason"]
+    assert not res.get("staged")
+
+
+def test_turn_cap_with_staged_actions_preserves_and_commits_them(graph, monkeypatch):
+    """The companion case: the turn cap hits AFTER real actions already
+    staged successfully. That work must survive to the human -- and
+    approving it must actually commit it, not silently no-op because a
+    stale halt_reason from the turn cap blocks the commit path."""
+    monkeypatch.setattr(settings, "max_agent_turns", 2)
+
+    def stage_then_cap(messages, tools):
+        return AIMessage(content="", tool_calls=[
+            tc("c1", "submit_diagnosis", DIAGNOSIS),
+            tc("c2", "action_generator",
+               {"action": "place_order", "sku": "RICE-5KG", "qty": 150,
+                "vendor_id": "VENDOR-COMMUNITY"}),
+        ]), None
+
+    monkeypatch.setattr(llm, "agent_step", stage_then_cap)
+    res, summary = run(graph, "e2e-cap-preserved")
+    assert summary is not None, "staged work exists -- must go through interrupt for review"
+    assert summary["guardrails"]["halt_reason"] and "turn limit" in summary["guardrails"]["halt_reason"]
+    # The mock reissues the same call every turn it's given (max_agent_turns=2
+    # means 2 turns run before the cap trips on turn 3), so 2 items stage --
+    # the exact count isn't the point, only that something real survived.
+    assert len(summary["queued"]["steps"]) == 2
+
+    # Approving it must actually commit -- this used to bail out silently
+    # because `halt_reason` was still set at the commit-gating check.
+    assert res["outcome"]["kind"] == "purchase_order"
+    assert res["outcome"]["total_sgd"] > 0
+    assert res.get("halt_reason") is None, "a successful commit must clear the stale halt_reason"
+
+
+def test_rejected_run_is_not_mislabeled_as_halted(graph, monkeypatch):
+    """`decide()` in api.py treats any truthy `halt_reason` as status='failed'.
+    A human rejecting a plan is a normal outcome, not a failure -- it must
+    not leave halt_reason set, or every rejected run shows up as 'failed'
+    in the dashboard next to genuine agent errors."""
+    script_llm(monkeypatch, [[
+        tc("c1", "submit_diagnosis", DIAGNOSIS),
+        tc("c2", "action_generator", {"action": "place_order", "sku": "RICE-5KG",
+                                      "qty": 150, "vendor_id": "VENDOR-COMMUNITY"}),
+    ]])
+    res, _ = run(graph, "e2e-reject-label", decision="rejected")
+    assert res["approval"] == "rejected"
+    assert res.get("halt_reason") is None
 
 
 def test_degrades_when_services_are_down(graph, monkeypatch):
