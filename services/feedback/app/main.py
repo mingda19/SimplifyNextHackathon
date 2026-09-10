@@ -16,8 +16,9 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pantry_common.security import require_operator
 from psycopg2.extras import Json
 from pydantic import BaseModel, Field
 
@@ -113,7 +114,7 @@ def post_feedback(payload: FeedbackIn, background_tasks: BackgroundTasks):
 
 
 @app.post("/feedback/extract-pending")
-def extract_pending(limit: int = 50):
+def extract_pending(limit: int = 50, user: dict = Depends(require_operator)):
     """Re-run extraction for anything still pending or failed.
 
     Backfill for rows created while extraction was broken (missing credentials,
@@ -231,6 +232,7 @@ def get_feedback(
     since: Optional[datetime] = None,
     urgency: Optional[int] = None,
     category: Optional[str] = None,
+    user: dict = Depends(require_operator),
 ):
     clauses = []
     params: list = []
@@ -263,7 +265,7 @@ def get_feedback(
 
 
 @app.get("/feedback/count")
-def count_feedback(since: Optional[datetime] = None):
+def count_feedback(since: Optional[datetime] = None, user: dict = Depends(require_operator)):
     """Row count only -- for the orchestrator's watch-mode poller, which
     checks this every WATCH_POLL_SECONDS and must not pull the whole table
     (thousands of rows in a seeded dataset) just to see if 10 more arrived.
@@ -276,7 +278,8 @@ def count_feedback(since: Optional[datetime] = None):
 
 
 @app.get("/feedback/unmet-needs")
-def get_unmet_needs(since: Optional[datetime] = None, min_confidence: float = 0.0):
+def get_unmet_needs(since: Optional[datetime] = None, min_confidence: float = 0.0,
+                    user: dict = Depends(require_operator)):
     """Ranked unmet needs for the agent. `gap: true` = no stocked SKU covers it."""
     return aggregate_unmet_needs(since=since, min_confidence=min_confidence)
 
@@ -300,7 +303,7 @@ class MatchSkusOut(BaseModel):
 
 
 @app.post("/feedback/match-skus", response_model=MatchSkusOut)
-def match_skus(payload: MatchSkusIn) -> MatchSkusOut:
+def match_skus(payload: MatchSkusIn, user: dict = Depends(require_operator)) -> MatchSkusOut:
     """Deterministic SKU matching only (layers 1-3: exact code, alias, fuzzy)
     -- never LLM adjudication, and never persists anything. Built for the
     orchestrator's `sku_matching` tool: an ad hoc "does a SKU exist for this
@@ -341,7 +344,7 @@ class ResolveIn(BaseModel):
 
 
 @app.post("/feedback/resolve")
-def resolve_feedback(payload: ResolveIn):
+def resolve_feedback(payload: ResolveIn, user: dict = Depends(require_operator)):
     """Mark feedback as addressed so it stops being re-proposed.
 
     Called by the orchestrator's COMMIT node with the SKUs an approved plan
@@ -374,7 +377,7 @@ def resolve_feedback(payload: ResolveIn):
 
 
 @app.post("/feedback/{feedback_id}/reopen")
-def reopen_feedback(feedback_id: int):
+def reopen_feedback(feedback_id: int, user: dict = Depends(require_operator)):
     """Undo a resolution — the need was not actually met."""
     with db.get_cursor() as cur:
         cur.execute("""UPDATE feedback.feedback_entries
@@ -386,7 +389,7 @@ def reopen_feedback(feedback_id: int):
 
 
 @app.get("/metrics")
-def get_metrics():
+def get_metrics(user: dict = Depends(require_operator)):
     with db.get_cursor() as cur:
         cur.execute(
             """

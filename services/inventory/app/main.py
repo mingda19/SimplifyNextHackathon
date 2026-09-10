@@ -30,9 +30,16 @@ app.add_middleware(
 )
 
 install_error_handlers(app)
-app.include_router(inventory_router)
-app.include_router(orders_router)
-app.include_router(vendors_router)
+# Stock, orders, and vendor routes carry no auth of their own -- they are
+# reachable by both charity staff (a JWT via the frontend) and the
+# orchestrator's agent (the internal service token). require_operator accepts
+# either. settings_router is deliberately left unwrapped: GET /settings is
+# intentionally public (see its own docstring) and PATCH already guards
+# itself with require_charity, since only a human should raise the budget.
+operator_only = [Depends(require_operator)]
+app.include_router(inventory_router, dependencies=operator_only)
+app.include_router(orders_router, dependencies=operator_only)
+app.include_router(vendors_router, dependencies=operator_only)
 app.include_router(settings_router)
 
 

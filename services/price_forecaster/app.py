@@ -14,8 +14,9 @@ import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi import Depends, FastAPI, HTTPException, Query  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
+from pantry_common.security import require_operator  # noqa: E402
 
 import forecast as F  # noqa: E402
 
@@ -40,7 +41,7 @@ def health():
 
 
 @app.get("/price/series")
-def series():
+def series(user: dict = Depends(require_operator)):
     """Every commodity the forecaster can serve."""
     return {"series": F.available_series()}
 
@@ -50,6 +51,7 @@ def price_forecast(
     series: str = Query("Rice", description="DSPI series name or alias"),
     horizon_months: int = Query(3, ge=3, le=3,
                                 description="only 3 is supported; h=1 was dropped"),
+    user: dict = Depends(require_operator),
 ):
     try:
         return F.forecast(series, horizon_months)
@@ -61,6 +63,7 @@ def price_forecast(
 
 
 @app.get("/price/forecast/all")
-def price_forecast_all(horizon_months: int = Query(3, ge=3, le=3)):
+def price_forecast_all(horizon_months: int = Query(3, ge=3, le=3),
+                       user: dict = Depends(require_operator)):
     """Whole basket in one call — cheaper for the agent's sense phase."""
     return {"forecasts": F.forecast_all(horizon_months)}
